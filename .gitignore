@@ -1,0 +1,44 @@
+# macOS
+.DS_Store
+
+# Compozy planning artifacts (PRD, TechSpec, ADRs)
+.compozy/
+
+# Node
+node_modules/
+
+# Next.js
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# Next/Vercel tooling
+.turbo/
+.vercel/
+
+# Environment (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+
+# App-specific
+.cache/
+tmp/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Tests
+coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
