@@ -18,6 +18,7 @@ export default defineConfig({
         "lib/**/*.ts",
         "components/chat/**/*.{ts,tsx}",
         "components/upload-panel/**/*.{ts,tsx}",
+        "scripts/smoke-helpers.ts",
       ],
       exclude: [
         "lib/**/*.test.ts",
