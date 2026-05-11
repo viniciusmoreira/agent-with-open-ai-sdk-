@@ -2,14 +2,18 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
-import type { Chunk } from "@/lib/domain/types";
+import type { Chunk, ParseResult } from "@/lib/domain/types";
 import type { SourceFilter, VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 import { readJsonIfPresent, writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
 import {
+  cacheRoot,
   embeddingsCacheDir,
   embeddingsCachePath,
 } from "@/lib/adapters/cache/paths";
+import { setCsvRows } from "@/lib/app/csv-row-cache";
 import { getEnv } from "@/lib/config/env";
+
+const CSV_ROWS_NAMESPACE = "csv-rows";
 
 const sourceRefSchema = z.discriminatedUnion("type", [
   z
@@ -43,6 +47,50 @@ const cacheFileSchema = z
     fileHash: z.string().min(1),
     model: z.string().min(1),
     chunks: z.array(persistedChunkSchema),
+  })
+  .strict();
+
+const bidRowSchema = z
+  .object({
+    rowId: z.number().int(),
+    projectId: z.string(),
+    county: z.string().optional(),
+    letDate: z.string().optional(),
+    itemNo: z.string(),
+    itemDesc: z.string(),
+    unit: z.string(),
+    qty: z.number(),
+    bidder: z.string(),
+    bidRank: z.number().optional(),
+    unitPrice: z.number(),
+    extAmt: z.number(),
+    bidTotal: z.number().optional(),
+    raw: z.record(z.string(), z.string()),
+  })
+  .strict();
+
+const columnMapSchema = z
+  .object({
+    projectId: z.string(),
+    itemNo: z.string(),
+    itemDesc: z.string(),
+    unit: z.string(),
+    qty: z.string(),
+    unitPrice: z.string(),
+    bidder: z.string(),
+    county: z.string().optional(),
+    letDate: z.string().optional(),
+    bidRank: z.string().optional(),
+    extAmt: z.string().optional(),
+    bidTotal: z.string().optional(),
+  })
+  .strict();
+
+const persistedCsvRowsSchema = z
+  .object({
+    rows: z.array(bidRowSchema),
+    columnMap: columnMapSchema,
+    unmapped: z.array(z.string()),
   })
   .strict();
 
@@ -111,16 +159,19 @@ export class InMemoryVectorStore implements VectorStorePort {
   }
 
   private async runHydrate(): Promise<void> {
+    await this.hydrateEmbeddings();
+    await this.hydrateCsvRows();
+    this.hydrated = true;
+  }
+
+  private async hydrateEmbeddings(): Promise<void> {
     const dir = embeddingsCacheDir(this.cacheBaseDir);
     const suffix = `-${this.model}.json`;
     let entries: string[];
     try {
       entries = await readdir(dir);
     } catch (cause) {
-      if (isNotFound(cause)) {
-        this.hydrated = true;
-        return;
-      }
+      if (isNotFound(cause)) return;
       throw cause;
     }
     for (const entry of entries) {
@@ -148,7 +199,41 @@ export class InMemoryVectorStore implements VectorStorePort {
         logHydrateSkip(filePath, "read-error", describeError(cause));
       }
     }
-    this.hydrated = true;
+  }
+
+  private async hydrateCsvRows(): Promise<void> {
+    const dir = path.join(cacheRoot(this.cacheBaseDir), CSV_ROWS_NAMESPACE);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (cause) {
+      if (isNotFound(cause)) return;
+      throw cause;
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      const filePath = path.join(dir, entry);
+      const fileHash = entry.slice(0, -".json".length);
+      if (fileHash.length === 0) continue;
+      try {
+        const raw = await readJsonIfPresent<unknown>(filePath);
+        if (raw === null) continue;
+        const parsed = persistedCsvRowsSchema.safeParse(raw);
+        if (!parsed.success) {
+          logCsvRowsHydrateSkip(filePath, "schema-invalid", parsed.error.message);
+          continue;
+        }
+        const result: ParseResult = {
+          rows: parsed.data.rows,
+          columnMap: parsed.data.columnMap,
+          unmapped: parsed.data.unmapped,
+          errors: [],
+        };
+        setCsvRows(fileHash, result);
+      } catch (cause) {
+        logCsvRowsHydrateSkip(filePath, "read-error", describeError(cause));
+      }
+    }
   }
 
   private async writeCache(fileHash: string, chunks: Chunk[]): Promise<void> {
@@ -227,6 +312,22 @@ function logHydrateSkip(
   console.error(
     JSON.stringify({
       scope: "vector-store-hydrate",
+      event: "skip",
+      reason,
+      filePath,
+      detail,
+    }),
+  );
+}
+
+function logCsvRowsHydrateSkip(
+  filePath: string,
+  reason: "schema-invalid" | "read-error",
+  detail: string,
+): void {
+  console.error(
+    JSON.stringify({
+      scope: "csv-rows-hydrate",
       event: "skip",
       reason,
       filePath,
