@@ -137,3 +137,103 @@ describe("event bus integration", () => {
     expect(elapsed).toBeLessThan(1);
   });
 });
+
+describe("event bus topic filter", () => {
+  const aHashEvent: IngestEvent = {
+    kind: "file-start",
+    file: "aaa111-report.csv",
+    sizeBytes: 1024,
+  };
+  const bHashEvent: IngestEvent = {
+    kind: "file-start",
+    file: "bbb222-plans.pdf",
+    sizeBytes: 2048,
+  };
+
+  it("delivers only events whose file starts with the requested fileHash", () => {
+    const received: IngestEvent[] = [];
+    subscribe(
+      (event) => {
+        received.push(event);
+      },
+      { fileHash: "aaa111" },
+    );
+    emit(aHashEvent);
+    emit(bHashEvent);
+    expect(received).toEqual([aHashEvent]);
+  });
+
+  it("does not match a different hash that shares a prefix", () => {
+    const received: IngestEvent[] = [];
+    subscribe(
+      (event) => {
+        received.push(event);
+      },
+      { fileHash: "aaa" },
+    );
+    // The hash separator `-` prevents `aaa` from matching `aaa111-...`.
+    emit(aHashEvent);
+    expect(received).toEqual([]);
+  });
+
+  it("isolates two concurrent scoped subscribers", () => {
+    const a: IngestEvent[] = [];
+    const b: IngestEvent[] = [];
+    subscribe(
+      (event) => {
+        a.push(event);
+      },
+      { fileHash: "aaa111" },
+    );
+    subscribe(
+      (event) => {
+        b.push(event);
+      },
+      { fileHash: "bbb222" },
+    );
+    emit(aHashEvent);
+    emit(bHashEvent);
+    expect(a).toEqual([aHashEvent]);
+    expect(b).toEqual([bHashEvent]);
+  });
+
+  it("delivers file-error events when the file matches the scoped hash", () => {
+    const received: IngestEvent[] = [];
+    subscribe(
+      (event) => {
+        received.push(event);
+      },
+      { fileHash: "aaa111" },
+    );
+    const errorEvent: IngestEvent = {
+      kind: "file-error",
+      file: "aaa111-report.csv",
+      message: "boom",
+    };
+    emit(errorEvent);
+    expect(received).toEqual([errorEvent]);
+  });
+
+  it("unsubscribes a scoped handler cleanly", () => {
+    const received: IngestEvent[] = [];
+    const unsubscribe = subscribe(
+      (event) => {
+        received.push(event);
+      },
+      { fileHash: "aaa111" },
+    );
+    unsubscribe();
+    emit(aHashEvent);
+    expect(received).toEqual([]);
+  });
+
+  it("treats an unscoped subscriber as a fan-out (default behavior)", () => {
+    const received: IngestEvent[] = [];
+    subscribe((event) => {
+      received.push(event);
+    });
+    emit(aHashEvent);
+    emit(bHashEvent);
+    expect(received).toEqual([aHashEvent, bHashEvent]);
+  });
+});

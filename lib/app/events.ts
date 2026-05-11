@@ -2,6 +2,15 @@ import type { IngestEvent } from "@/lib/domain/types";
 
 export type IngestEventHandler = (event: IngestEvent) => void;
 
+export type SubscribeOptions = {
+  /**
+   * Restrict delivery to events whose `file` field starts with `${fileHash}-`.
+   * Upload routes write to `${fileHash}-${baseName}` so this scopes a subscriber
+   * to a single upload without leaking events from concurrent ingestions.
+   */
+  fileHash?: string;
+};
+
 const subscribers = new Set<IngestEventHandler>();
 
 export function emit(event: IngestEvent): void {
@@ -21,13 +30,22 @@ export function emit(event: IngestEvent): void {
   }
 }
 
-export function subscribe(handler: IngestEventHandler): () => void {
-  subscribers.add(handler);
+export function subscribe(
+  handler: IngestEventHandler,
+  opts?: SubscribeOptions,
+): () => void {
+  const fileHash = opts?.fileHash;
+  const registered: IngestEventHandler = fileHash
+    ? (event) => {
+        if (event.file.startsWith(`${fileHash}-`)) handler(event);
+      }
+    : handler;
+  subscribers.add(registered);
   let active = true;
   return () => {
     if (!active) return;
     active = false;
-    subscribers.delete(handler);
+    subscribers.delete(registered);
   };
 }
 
