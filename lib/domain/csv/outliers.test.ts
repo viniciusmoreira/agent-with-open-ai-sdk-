@@ -131,7 +131,41 @@ describe("flagOutliers", () => {
       threshold: 0.15,
       minPeers: 3,
       flagged: [],
+      total: 0,
     });
+  });
+
+  it("sorts flagged rows by |deviation| descending so the strongest signal is first", () => {
+    const rows: BidRow[] = [
+      makeRow(1, { itemNo: "800", unit: "LS", unitPrice: 100 }),
+      makeRow(2, { itemNo: "800", unit: "LS", unitPrice: 100 }),
+      makeRow(3, { itemNo: "800", unit: "LS", unitPrice: 100 }),
+      makeRow(4, { itemNo: "800", unit: "LS", unitPrice: 130 }),
+      makeRow(5, { itemNo: "800", unit: "LS", unitPrice: 500 }),
+    ];
+    const result = flagOutliers(rows);
+    expect(result.flagged.length).toBeGreaterThanOrEqual(2);
+    const absDevs = result.flagged.map((f) => Math.abs(f.deviation));
+    for (let i = 1; i < absDevs.length; i++) {
+      expect(absDevs[i - 1]).toBeGreaterThanOrEqual(absDevs[i]!);
+    }
+    expect(result.flagged[0]?.rowId).toBe(5);
+  });
+
+  it("caps flagged at 50 rows and reports the pre-cap total", () => {
+    const rows: BidRow[] = [];
+    let rowId = 1;
+    // 60 distinct itemNo groups, each with 3 peers; the third peer in every
+    // group deviates by 30% (well past the 15% default), producing 60 flags.
+    for (let g = 0; g < 60; g++) {
+      const itemNo = `OUT_${g}`;
+      rows.push(makeRow(rowId++, { itemNo, unit: "LS", unitPrice: 100 }));
+      rows.push(makeRow(rowId++, { itemNo, unit: "LS", unitPrice: 100 }));
+      rows.push(makeRow(rowId++, { itemNo, unit: "LS", unitPrice: 130 }));
+    }
+    const result = flagOutliers(rows);
+    expect(result.total).toBe(60);
+    expect(result.flagged).toHaveLength(50);
   });
 });
 

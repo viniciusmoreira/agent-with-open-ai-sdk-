@@ -17,6 +17,7 @@ const DESCRIPTION = [
   "Flags bid rows whose unit price deviates from peer bids on the same itemNo + unit by more than a threshold (default 15%).",
   "Operates only on the parsed CSV — never on PDF documents.",
   "Returns each flagged row with: groupMean (leave-one-out peer mean), groupCount, and a signed deviation fraction (positive = above peers, negative = below).",
+  "Results are sorted by |deviation| descending (strongest signal first) and capped at the top 50 flags; the response includes `total` (pre-cap count) so you can note truncation when total > flagged.length.",
   "Use this tool whenever the user asks about pricing anomalies, outliers, suspicious bids, or items priced unusually high or low.",
   "Optional inputs: threshold (default 0.15) and minPeers (default 3; groups with fewer rows are skipped).",
 ].join("\n");

@@ -118,10 +118,11 @@ describe("find_outliers tool — execute", () => {
 });
 
 describe("find_outliers tool — result shape (TechSpec OutlierResult)", () => {
-  it("returns exactly { threshold, minPeers, flagged } and documented flag keys", async () => {
+  it("returns exactly { threshold, minPeers, flagged, total } and documented flag keys", async () => {
     const tool = createFindOutliersTool({ listRows: () => FIXTURE_ROWS });
     const result = await execute(tool, {});
-    expect(Object.keys(result).sort()).toEqual(["flagged", "minPeers", "threshold"]);
+    expect(Object.keys(result).sort()).toEqual(["flagged", "minPeers", "threshold", "total"]);
+    expect(result.total).toBe(result.flagged.length);
     const flag = result.flagged.find((f) => f.rowId === 4);
     expect(flag).toBeDefined();
     expect(Object.keys(flag!).sort()).toEqual(

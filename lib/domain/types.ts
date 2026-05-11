@@ -64,6 +64,7 @@ export type OutlierResult = {
   threshold: number;
   minPeers: number;
   flagged: OutlierFlag[];
+  total: number;
 };
 
 export type IngestEvent =
