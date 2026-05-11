@@ -1,4 +1,4 @@
-import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
+import { readdir, readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
@@ -44,9 +44,7 @@ export type IngestCsvDeps = {
 const CSV_ROWS_NAMESPACE = "csv-rows";
 
 // Mirrors `BidRow` from `lib/domain/types.ts`. Strict so unknown keys in a
-// drifted on-disk payload fail closed and force a re-parse. The same shape is
-// re-declared in `lib/adapters/vector-store/in-memory.ts`'s hydrate path; both
-// readers must move together if `BidRow` changes.
+// drifted on-disk payload fail closed and force a re-parse.
 const bidRowSchema = z
   .object({
     rowId: z.number().int(),
@@ -251,6 +249,43 @@ export function csvRowsCachePath(fileHash: string, baseDir?: string): string {
   return path.join(cacheRoot(baseDir), CSV_ROWS_NAMESPACE, `${fileHash}.json`);
 }
 
+export async function hydrateCsvRowCacheFromDisk(
+  opts: { cacheBaseDir?: string } = {},
+): Promise<void> {
+  const dir = path.join(cacheRoot(opts.cacheBaseDir), CSV_ROWS_NAMESPACE);
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch (cause) {
+    if (isNotFound(cause)) return;
+    throw cause;
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    const filePath = path.join(dir, entry);
+    const fileHash = entry.slice(0, -".json".length);
+    if (fileHash.length === 0) continue;
+    try {
+      const raw = await readJsonIfPresent<unknown>(filePath);
+      if (raw === null) continue;
+      const parsed = persistedCsvRowsSchema.safeParse(raw);
+      if (!parsed.success) {
+        logCsvRowsBulkHydrateSkip(filePath, "schema-invalid", parsed.error.message);
+        continue;
+      }
+      const result: ParseResult = {
+        rows: parsed.data.rows,
+        columnMap: parsed.data.columnMap,
+        unmapped: parsed.data.unmapped,
+        errors: [],
+      };
+      setCsvRows(fileHash, result);
+    } catch (cause) {
+      logCsvRowsBulkHydrateSkip(filePath, "read-error", describeError(cause));
+    }
+  }
+}
+
 async function tryLoadCsvRows(
   fileHash: string,
   load: LoadCsvRowsFn,
@@ -295,6 +330,31 @@ async function defaultLoadCsvRows(
     unmapped: parsed.data.unmapped,
     errors: [],
   };
+}
+
+function isNotFound(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function logCsvRowsBulkHydrateSkip(
+  filePath: string,
+  reason: "schema-invalid" | "read-error",
+  detail: string,
+): void {
+  console.error(
+    JSON.stringify({
+      scope: "csv-rows-hydrate",
+      event: "skip",
+      reason,
+      filePath,
+      detail,
+    }),
+  );
 }
 
 function logCsvRowsCacheSkip(

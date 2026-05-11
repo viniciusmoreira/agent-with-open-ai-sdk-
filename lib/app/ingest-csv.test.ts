@@ -2,16 +2,19 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
+import { cacheRoot } from "@/lib/adapters/cache/paths";
+import type { BidRow, ColumnMap } from "@/lib/domain/types";
 import type { EmbeddingsPort } from "@/lib/domain/ports/embeddings-port";
 import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 import type { Chunk, IngestEvent, ParseResult } from "@/lib/domain/types";
 
-import { clearCsvRowCache, getCsvRows } from "./csv-row-cache";
+import { clearCsvRowCache, getAllCsvRows, getCsvRows } from "./csv-row-cache";
 import {
   csvRowsCachePath,
+  hydrateCsvRowCacheFromDisk,
   ingestCsv,
   rehydrateCsvRowsFromDisk,
   type IngestCsvDeps,
@@ -653,5 +656,146 @@ describe("rehydrateCsvRowsFromDisk", () => {
     const ok = await rehydrateCsvRowsFromDisk("hash-seed", { loadCsvRows });
     expect(ok).toBe(true);
     expect(loadCsvRows).not.toHaveBeenCalled();
+  });
+});
+
+describe("hydrateCsvRowCacheFromDisk", () => {
+  let workDir: string;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  const sampleColumnMap: ColumnMap = {
+    projectId: "Project ID",
+    itemNo: "Item No",
+    itemDesc: "Item Description",
+    unit: "Unit",
+    qty: "Qty",
+    unitPrice: "Unit Price",
+    bidder: "Bidder",
+  };
+
+  function sampleRow(rowId: number, overrides: Partial<BidRow> = {}): BidRow {
+    return {
+      rowId,
+      projectId: "P-1",
+      itemNo: `I-${rowId}`,
+      itemDesc: `Item ${rowId}`,
+      unit: "EA",
+      qty: 1,
+      bidder: "Acme",
+      unitPrice: 100,
+      extAmt: 100,
+      raw: { "Item No": `I-${rowId}` },
+      ...overrides,
+    };
+  }
+
+  async function seedCsvRows(fileHash: string, payload: unknown) {
+    const dir = path.join(cacheRoot(workDir), "csv-rows");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, `${fileHash}.json`),
+      typeof payload === "string" ? payload : JSON.stringify(payload),
+      "utf8",
+    );
+  }
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(path.join(tmpdir(), "hydrate-csvrows-"));
+    clearCsvRowCache();
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    errorSpy.mockRestore();
+    clearCsvRowCache();
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  it("populates the CSV row cache from .cache/csv-rows", async () => {
+    await seedCsvRows("hashA", {
+      rows: [sampleRow(1), sampleRow(2)],
+      columnMap: sampleColumnMap,
+      unmapped: ["Extra Column"],
+    });
+
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+
+    const stored = getCsvRows("hashA");
+    expect(stored).toBeDefined();
+    expect(stored?.rows.map((r) => r.rowId)).toEqual([1, 2]);
+    expect(stored?.columnMap).toEqual(sampleColumnMap);
+    expect(stored?.unmapped).toEqual(["Extra Column"]);
+    expect(stored?.errors).toEqual([]);
+    expect(getAllCsvRows()).toHaveLength(2);
+  });
+
+  it("returns without error when the csv-rows directory is missing", async () => {
+    await expect(
+      hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir }),
+    ).resolves.toBeUndefined();
+    expect(getAllCsvRows()).toEqual([]);
+  });
+
+  it("skips schema-invalid files and logs the reason", async () => {
+    await seedCsvRows("bad", {
+      rows: [{ rowId: "not-a-number", projectId: "P-1" }],
+      columnMap: sampleColumnMap,
+      unmapped: [],
+    });
+
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+
+    expect(getCsvRows("bad")).toBeUndefined();
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as {
+      scope: string;
+      reason: string;
+    };
+    expect(logged.scope).toBe("csv-rows-hydrate");
+    expect(logged.reason).toBe("schema-invalid");
+  });
+
+  it("skips malformed JSON without throwing", async () => {
+    await seedCsvRows("broken", "{not valid json");
+
+    await expect(
+      hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir }),
+    ).resolves.toBeUndefined();
+
+    expect(getCsvRows("broken")).toBeUndefined();
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as {
+      scope: string;
+      reason: string;
+    };
+    expect(logged.scope).toBe("csv-rows-hydrate");
+    expect(logged.reason).toBe("read-error");
+  });
+
+  it("ignores .tmp files from interrupted atomic writes", async () => {
+    const dir = path.join(cacheRoot(workDir), "csv-rows");
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, "ghost.json.abc123.tmp"),
+      JSON.stringify({ rows: [], columnMap: sampleColumnMap, unmapped: [] }),
+      "utf8",
+    );
+
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+
+    expect(getCsvRows("ghost")).toBeUndefined();
+    expect(getCsvRows("ghost.json.abc123")).toBeUndefined();
+  });
+
+  it("loads valid files and skips corrupt siblings", async () => {
+    await seedCsvRows("valid", {
+      rows: [sampleRow(5)],
+      columnMap: sampleColumnMap,
+      unmapped: [],
+    });
+    await seedCsvRows("corrupt", "}{");
+
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+
+    expect(getCsvRows("valid")?.rows[0]?.rowId).toBe(5);
+    expect(getCsvRows("corrupt")).toBeUndefined();
   });
 });

@@ -6,14 +6,14 @@ import { createVisionOcr } from "@/lib/adapters/pdf/vision-ocr";
 import { store } from "@/lib/adapters/vector-store/in-memory";
 import { getEnv } from "@/lib/config/env";
 import { emit } from "@/lib/app/events";
-import { ingestCsv } from "@/lib/app/ingest-csv";
+import { hydrateCsvRowCacheFromDisk, ingestCsv } from "@/lib/app/ingest-csv";
 import { ingestPdf } from "@/lib/app/ingest-pdf";
 import { handleUpload } from "@/lib/app/upload";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request): Promise<Response> {
-  await store.hydrate();
+  await Promise.all([store.hydrate(), hydrateCsvRowCacheFromDisk()]);
   const embeddings = createOpenAIEmbeddings();
   const pdfText = createPdfTextLayer();
   const ocr = createVisionOcr();

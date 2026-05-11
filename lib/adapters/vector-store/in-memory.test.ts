@@ -3,17 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { BidRow, Chunk, ColumnMap, SourceRef } from "@/lib/domain/types";
+import type { Chunk, SourceRef } from "@/lib/domain/types";
 import {
-  cacheRoot,
   embeddingsCacheDir,
   embeddingsCachePath,
 } from "@/lib/adapters/cache/paths";
-import {
-  clearCsvRowCache,
-  getAllCsvRows,
-  getCsvRows,
-} from "@/lib/app/csv-row-cache";
 import { cosineSimilarity, InMemoryVectorStore } from "./in-memory";
 
 const MODEL = "test-embedding-model";
@@ -442,161 +436,6 @@ describe("InMemoryVectorStore.hydrate defensive validation", () => {
     expect(store.has("good")).toBe(true);
     const hits = store.search([1, 0, 0], 5);
     expect(hits.map((c) => c.id)).toEqual(["g1"]);
-  });
-});
-
-describe("InMemoryVectorStore.hydrate csv-rows rehydration", () => {
-  let workDir: string;
-  let errorSpy: ReturnType<typeof vi.spyOn>;
-
-  const sampleColumnMap: ColumnMap = {
-    projectId: "Project ID",
-    itemNo: "Item No",
-    itemDesc: "Item Description",
-    unit: "Unit",
-    qty: "Qty",
-    unitPrice: "Unit Price",
-    bidder: "Bidder",
-  };
-
-  function sampleRow(rowId: number, overrides: Partial<BidRow> = {}): BidRow {
-    return {
-      rowId,
-      projectId: "P-1",
-      itemNo: `I-${rowId}`,
-      itemDesc: `Item ${rowId}`,
-      unit: "EA",
-      qty: 1,
-      bidder: "Acme",
-      unitPrice: 100,
-      extAmt: 100,
-      raw: { "Item No": `I-${rowId}` },
-      ...overrides,
-    };
-  }
-
-  async function seedCsvRows(fileHash: string, payload: unknown) {
-    const dir = path.join(cacheRoot(workDir), "csv-rows");
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      path.join(dir, `${fileHash}.json`),
-      typeof payload === "string" ? payload : JSON.stringify(payload),
-      "utf8",
-    );
-  }
-
-  beforeEach(async () => {
-    workDir = await mkdtemp(path.join(tmpdir(), "vstore-csvrows-"));
-    clearCsvRowCache();
-    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  });
-
-  afterEach(async () => {
-    errorSpy.mockRestore();
-    clearCsvRowCache();
-    await rm(workDir, { recursive: true, force: true });
-  });
-
-  it("populates the CSV row cache from .cache/csv-rows on hydrate", async () => {
-    await seedCsvRows("hashA", {
-      rows: [sampleRow(1), sampleRow(2)],
-      columnMap: sampleColumnMap,
-      unmapped: ["Extra Column"],
-    });
-    const store = new InMemoryVectorStore({
-      embeddingModel: MODEL,
-      cacheBaseDir: workDir,
-    });
-    await store.hydrate();
-
-    const stored = getCsvRows("hashA");
-    expect(stored).toBeDefined();
-    expect(stored?.rows.map((r) => r.rowId)).toEqual([1, 2]);
-    expect(stored?.columnMap).toEqual(sampleColumnMap);
-    expect(stored?.unmapped).toEqual(["Extra Column"]);
-    expect(stored?.errors).toEqual([]);
-    expect(getAllCsvRows()).toHaveLength(2);
-  });
-
-  it("hydrates csv rows even when the embeddings cache directory is missing", async () => {
-    await seedCsvRows("hashB", {
-      rows: [sampleRow(7)],
-      columnMap: sampleColumnMap,
-      unmapped: [],
-    });
-    const store = new InMemoryVectorStore({
-      embeddingModel: MODEL,
-      cacheBaseDir: workDir,
-    });
-    await store.hydrate();
-    expect(getCsvRows("hashB")?.rows[0]?.rowId).toBe(7);
-  });
-
-  it("returns immediately when neither cache directory exists", async () => {
-    const empty = await mkdtemp(path.join(tmpdir(), "vstore-empty-"));
-    try {
-      const store = new InMemoryVectorStore({
-        embeddingModel: MODEL,
-        cacheBaseDir: empty,
-      });
-      await expect(store.hydrate()).resolves.toBeUndefined();
-      expect(getAllCsvRows()).toEqual([]);
-    } finally {
-      await rm(empty, { recursive: true, force: true });
-    }
-  });
-
-  it("skips schema-invalid csv-rows files and logs the reason", async () => {
-    await seedCsvRows("bad", {
-      rows: [{ rowId: "not-a-number", projectId: "P-1" }],
-      columnMap: sampleColumnMap,
-      unmapped: [],
-    });
-    const store = new InMemoryVectorStore({
-      embeddingModel: MODEL,
-      cacheBaseDir: workDir,
-    });
-    await store.hydrate();
-    expect(getCsvRows("bad")).toBeUndefined();
-    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as {
-      scope: string;
-      reason: string;
-    };
-    expect(logged.scope).toBe("csv-rows-hydrate");
-    expect(logged.reason).toBe("schema-invalid");
-  });
-
-  it("skips malformed JSON without throwing", async () => {
-    await seedCsvRows("broken", "{not valid json");
-    const store = new InMemoryVectorStore({
-      embeddingModel: MODEL,
-      cacheBaseDir: workDir,
-    });
-    await expect(store.hydrate()).resolves.toBeUndefined();
-    expect(getCsvRows("broken")).toBeUndefined();
-    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as {
-      scope: string;
-      reason: string;
-    };
-    expect(logged.scope).toBe("csv-rows-hydrate");
-    expect(logged.reason).toBe("read-error");
-  });
-
-  it("ignores .tmp files from interrupted atomic writes", async () => {
-    const dir = path.join(cacheRoot(workDir), "csv-rows");
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      path.join(dir, "ghost.json.abc123.tmp"),
-      JSON.stringify({ rows: [], columnMap: sampleColumnMap, unmapped: [] }),
-      "utf8",
-    );
-    const store = new InMemoryVectorStore({
-      embeddingModel: MODEL,
-      cacheBaseDir: workDir,
-    });
-    await store.hydrate();
-    expect(getCsvRows("ghost")).toBeUndefined();
-    expect(getCsvRows("ghost.json.abc123")).toBeUndefined();
   });
 });
 

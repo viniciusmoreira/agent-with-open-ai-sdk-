@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 import { store } from "@/lib/adapters/vector-store/in-memory";
+import { hydrateCsvRowCacheFromDisk } from "@/lib/app/ingest-csv";
 import { runAgent } from "@/lib/app/agent/run";
 
 export const runtime = "nodejs";
@@ -44,7 +45,7 @@ export async function POST(request: Request): Promise<Response> {
     return jsonError(413, "Chat transcript exceeds the maximum allowed size");
   }
 
-  await store.hydrate();
+  await Promise.all([store.hydrate(), hydrateCsvRowCacheFromDisk()]);
   let result: Awaited<ReturnType<typeof runAgent>>;
   try {
     result = await runAgent({ messages: parsed.data.messages });
