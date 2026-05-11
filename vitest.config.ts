@@ -14,11 +14,16 @@ export default defineConfig({
     setupFiles: ["tests/setup.ts"],
     coverage: {
       provider: "v8",
-      include: ["lib/**/*.ts", "components/chat/**/*.{ts,tsx}"],
+      include: [
+        "lib/**/*.ts",
+        "components/chat/**/*.{ts,tsx}",
+        "components/upload-panel/**/*.{ts,tsx}",
+      ],
       exclude: [
         "lib/**/*.test.ts",
         "lib/utils.ts",
         "components/chat/**/*.test.{ts,tsx}",
+        "components/upload-panel/**/*.test.{ts,tsx}",
       ],
       reporter: ["text", "html"],
     },

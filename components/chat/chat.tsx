@@ -6,6 +6,7 @@ import { useChat } from "@ai-sdk/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useUploadReady } from "@/components/upload-panel/upload-ready-context";
 
 import { EmptyState } from "./empty-state";
 import { ChatMessage } from "./message";
@@ -13,7 +14,9 @@ import { ChatMessage } from "./message";
 export function Chat() {
   const { messages, sendMessage, status, error } = useChat();
   const [input, setInput] = useState("");
+  const { ready } = useUploadReady();
   const isBusy = status === "submitted" || status === "streaming";
+  const inputDisabled = isBusy || !ready;
 
   const submit = useCallback(
     (text: string) => {
@@ -48,7 +51,7 @@ export function Chat() {
       <ScrollArea className="flex-1">
         <div className="flex flex-col gap-3">
           {isEmpty ? (
-            <EmptyState onSelect={onSuggested} disabled={isBusy} />
+            <EmptyState onSelect={onSuggested} disabled={inputDisabled} />
           ) : (
             messages.map((m) => <ChatMessage key={m.id} message={m} />)
           )}
@@ -70,12 +73,19 @@ export function Chat() {
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about the bid data or plan set…"
+          placeholder={
+            ready
+              ? "Ask about the bid data or plan set…"
+              : "Upload a CSV or PDF to start…"
+          }
           aria-label="Chat input"
-          disabled={isBusy}
+          disabled={inputDisabled}
           data-testid="chat-input"
         />
-        <Button type="submit" disabled={isBusy || input.trim().length === 0}>
+        <Button
+          type="submit"
+          disabled={inputDisabled || input.trim().length === 0}
+        >
           Send
         </Button>
       </form>
