@@ -96,34 +96,25 @@ export async function rasterizePdfPage(
   page: number,
   options: RasterizeOptions = {},
 ): Promise<Uint8Array> {
-  const rasterize = options.pdfToPng ?? pdfToPng;
+  let out: Map<number, Uint8Array>;
   try {
-    const pages = await rasterize(cloneBytes(pdf).buffer as ArrayBuffer, {
-      pagesToProcess: [page],
-      viewportScale: options.viewportScale ?? DEFAULT_VIEWPORT_SCALE,
-      strictPagesToProcess: true,
-      verbosityLevel: 0,
-    });
-    const out = pages[0];
-    if (!out) {
-      throw new OcrAdapterError({
-        kind: "pdf",
-        message: `rasterizer returned no output for page ${page}`,
-        page,
-        ...(options.file !== undefined ? { file: options.file } : {}),
-      });
+    out = await rasterizePdfPages(pdf, [page], options);
+  } catch (err) {
+    if (err instanceof OcrAdapterError && err.domainError.kind === "pdf") {
+      throw new OcrAdapterError({ ...err.domainError, page });
     }
-    return new Uint8Array(out.content);
-  } catch (cause) {
-    if (cause instanceof OcrAdapterError) throw cause;
+    throw err;
+  }
+  const png = out.get(page);
+  if (!png) {
     throw new OcrAdapterError({
       kind: "pdf",
-      message: `failed to rasterize page ${page}: ${describe(cause)}`,
+      message: `rasterizer returned no output for page ${page}`,
       page,
-      cause,
       ...(options.file !== undefined ? { file: options.file } : {}),
     });
   }
+  return png;
 }
 
 export async function rasterizePdfPages(
