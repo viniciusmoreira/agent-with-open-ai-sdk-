@@ -69,43 +69,13 @@ export function createSearchDocumentsTool(
         ? (ref) => ref.type === input.sourceType
         : undefined;
       const hits = deps.store.search(queryVector, k, filter);
-      const queryNorm = vectorNorm(queryVector);
-      const chunks: SearchDocumentsResultChunk[] = hits.map((chunk) => ({
-        text: chunk.text,
-        sourceRef: chunk.sourceRef,
-        score: cosineScore(chunk.vector, queryVector, queryNorm),
+      const chunks: SearchDocumentsResultChunk[] = hits.map((hit) => ({
+        text: hit.chunk.text,
+        sourceRef: hit.chunk.sourceRef,
+        score: hit.score,
       }));
       return { chunks };
     },
   };
 }
 
-function cosineScore(
-  a: Float32Array,
-  b: number[],
-  bNorm: number,
-): number {
-  if (bNorm === 0) return 0;
-  const len = Math.min(a.length, b.length);
-  if (len === 0) return 0;
-  let dot = 0;
-  let aSq = 0;
-  for (let i = 0; i < len; i++) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    dot += av * bv;
-    aSq += av * av;
-  }
-  const aNorm = Math.sqrt(aSq);
-  if (aNorm === 0) return 0;
-  return dot / (aNorm * bNorm);
-}
-
-function vectorNorm(v: ArrayLike<number>): number {
-  let sum = 0;
-  for (let i = 0; i < v.length; i++) {
-    const x = v[i] ?? 0;
-    sum += x * x;
-  }
-  return Math.sqrt(sum);
-}

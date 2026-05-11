@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { EmbeddingsPort } from "@/lib/domain/ports/embeddings-port";
-import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
+import type { SearchHit, VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 import type { Chunk } from "@/lib/domain/types";
 
 import {
@@ -37,20 +37,37 @@ function makeEmbeddings(vector: number[]): {
   return { port: { embedTexts: embed }, embed };
 }
 
+function cosineScore(a: Float32Array, b: number[]): number {
+  const len = Math.min(a.length, b.length);
+  let dot = 0, aSq = 0, bSq = 0;
+  for (let i = 0; i < len; i++) {
+    const av = a[i] ?? 0;
+    const bv = b[i] ?? 0;
+    dot += av * bv;
+    aSq += av * av;
+    bSq += bv * bv;
+  }
+  const denom = Math.sqrt(aSq) * Math.sqrt(bSq);
+  return denom === 0 ? 0 : dot / denom;
+}
+
 function makeStore(chunks: Chunk[]): {
   store: VectorStorePort;
   search: ReturnType<typeof vi.fn>;
 } {
   const search = vi.fn(
     (
-      _query: number[],
+      query: number[],
       k: number,
       filter?: (ref: Chunk["sourceRef"]) => boolean,
-    ): Chunk[] => {
+    ): SearchHit[] => {
       const filtered = filter
         ? chunks.filter((c) => filter(c.sourceRef))
         : chunks;
-      return filtered.slice(0, k);
+      return filtered.slice(0, k).map((chunk) => ({
+        chunk,
+        score: cosineScore(chunk.vector, query),
+      }));
     },
   );
   const store: VectorStorePort = {

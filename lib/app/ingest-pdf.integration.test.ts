@@ -107,9 +107,9 @@ describe("ingestPdf integration (mocked mixed-path)", () => {
       // Verify chunks have correct sourceRef shape and stable per-page ordering.
       const sample = store.search(deterministicEmbed(longTextPage1), 100);
       expect(sample.length).toBeGreaterThanOrEqual(3);
-      for (const chunk of sample) {
-        expect(chunk.sourceRef.type).toBe("pdf-page");
-        expect((chunk.sourceRef as { file: string }).file).toBe("mixed.pdf");
+      for (const hit of sample) {
+        expect(hit.chunk.sourceRef.type).toBe("pdf-page");
+        expect((hit.chunk.sourceRef as { file: string }).file).toBe("mixed.pdf");
       }
 
       const done = events[events.length - 1] as Extract<IngestEvent, { kind: "file-done" }>;

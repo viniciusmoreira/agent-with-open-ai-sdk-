@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { Chunk } from "@/lib/domain/types";
-import type { SourceFilter, VectorStorePort } from "@/lib/domain/ports/vector-store-port";
+import type { SearchHit, SourceFilter, VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 import { readJsonIfPresent, writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
 import {
   embeddingsCacheDir,
@@ -90,11 +90,11 @@ export class InMemoryVectorStore implements VectorStorePort {
     await this.writeCache(fileHash, stored);
   }
 
-  search(queryVector: number[], k: number, filter?: SourceFilter): Chunk[] {
+  search(queryVector: number[], k: number, filter?: SourceFilter): SearchHit[] {
     if (k <= 0 || queryVector.length === 0) return [];
     const queryNorm = vectorNorm(queryVector);
     if (queryNorm === 0) return [];
-    const scored: Array<{ chunk: Chunk; score: number }> = [];
+    const scored: SearchHit[] = [];
     for (const chunks of this.byFileHash.values()) {
       for (const chunk of chunks) {
         if (filter && !filter(chunk.sourceRef)) continue;
@@ -103,7 +103,7 @@ export class InMemoryVectorStore implements VectorStorePort {
       }
     }
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, k).map((s) => s.chunk);
+    return scored.slice(0, k);
   }
 
   private get model(): string {

@@ -74,7 +74,7 @@ describe("ingestCsv integration (sample_bid_tabulation.csv)", () => {
       const queryVec = deterministicEmbed(parsed!.rows[0]!.itemDesc);
       const results = store.search(queryVec, 1);
       expect(results).toHaveLength(1);
-      expect(results[0]!.sourceRef.type).toBe("csv-row");
+      expect(results[0]!.chunk.sourceRef.type).toBe("csv-row");
 
       const initialCalls = (embeddings.embedTexts as ReturnType<typeof vi.fn>).mock
         .calls.length;

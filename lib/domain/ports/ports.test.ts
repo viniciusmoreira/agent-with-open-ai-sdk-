@@ -4,7 +4,7 @@ import type { Chunk, SourceRef } from "../types";
 import type { EmbeddingsPort } from "./embeddings-port";
 import type { OcrPort } from "./ocr-port";
 import type { PdfTextPort } from "./pdf-text-port";
-import type { VectorStorePort } from "./vector-store-port";
+import type { SearchHit, VectorStorePort } from "./vector-store-port";
 
 describe("port contracts", () => {
   it("EmbeddingsPort accepts a placeholder adapter that returns deterministic vectors", async () => {
@@ -30,7 +30,8 @@ describe("port contracts", () => {
         Array.from(store.values())
           .flat()
           .filter((c) => (filter ? filter(c.sourceRef) : true))
-          .slice(0, k),
+          .slice(0, k)
+          .map((chunk): SearchHit => ({ chunk, score: 1 })),
     };
     await adapter.hydrate();
     expect(adapter.has("missing")).toBe(false);
@@ -45,7 +46,7 @@ describe("port contracts", () => {
     expect(adapter.has("h1")).toBe(true);
     const hits = adapter.search([0, 0], 5, (r) => r.type === "csv-row");
     expect(hits).toHaveLength(1);
-    expect(hits[0]?.id).toBe("h1:csv:1");
+    expect(hits[0]?.chunk.id).toBe("h1:csv:1");
   });
 
   it("OcrPort and PdfTextPort accept conforming placeholder adapters", async () => {

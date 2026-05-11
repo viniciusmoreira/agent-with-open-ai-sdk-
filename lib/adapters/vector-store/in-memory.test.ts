@@ -78,7 +78,7 @@ describe("InMemoryVectorStore upsert + search", () => {
     await store.upsert("hashA", [a, b, c]);
 
     const ranked = store.search([1, 0, 0], 3);
-    expect(ranked.map((r) => r.id)).toEqual(["a", "b", "c"]);
+    expect(ranked.map((r) => r.chunk.id)).toEqual(["a", "b", "c"]);
   });
 
   it("limits results to k", async () => {
@@ -112,7 +112,7 @@ describe("InMemoryVectorStore upsert + search", () => {
     const pdf = chunk("pdf1", [1, 0, 0], pdfRef(1));
     await store.upsert("mixed", [csv, pdf]);
     const onlyPdf = store.search([1, 0, 0], 5, (r) => r.type === "pdf-page");
-    expect(onlyPdf.map((c) => c.id)).toEqual(["pdf1"]);
+    expect(onlyPdf.map((h) => h.chunk.id)).toEqual(["pdf1"]);
   });
 
   it("returns empty when the query vector is zero", async () => {
@@ -189,9 +189,9 @@ describe("InMemoryVectorStore cache write-through", () => {
     await reader.hydrate();
     expect(reader.has("fileX")).toBe(true);
     const hits = reader.search([0.1, 0.2, 0.3], 1);
-    expect(hits[0]?.id).toBe("c1");
-    expect(hits[0]?.text).toBe("specification body");
-    expect(hits[0]?.vector).toBeInstanceOf(Float32Array);
+    expect(hits[0]?.chunk.id).toBe("c1");
+    expect(hits[0]?.chunk.text).toBe("specification body");
+    expect(hits[0]?.chunk.vector).toBeInstanceOf(Float32Array);
   });
 });
 
@@ -435,7 +435,7 @@ describe("InMemoryVectorStore.hydrate defensive validation", () => {
     expect(store.has("broken")).toBe(false);
     expect(store.has("good")).toBe(true);
     const hits = store.search([1, 0, 0], 5);
-    expect(hits.map((c) => c.id)).toEqual(["g1"]);
+    expect(hits.map((h) => h.chunk.id)).toEqual(["g1"]);
   });
 });
 
@@ -470,7 +470,7 @@ describe("InMemoryVectorStore.upsert overwrite", () => {
       chunk("new2", [0, 1], csvRef(3)),
     ]);
     const hits = store.search([1, 0], 10);
-    expect(hits.map((c) => c.id).sort()).toEqual(["new1", "new2"]);
+    expect(hits.map((h) => h.chunk.id).sort()).toEqual(["new1", "new2"]);
     const entries = await readdir(embeddingsCacheDir(workDir));
     expect(entries).toEqual([`hash-${MODEL}.json`]);
   });
