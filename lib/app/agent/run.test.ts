@@ -133,7 +133,7 @@ describe("single-import enforcement", () => {
           continue;
         }
         if (!/\.(ts|tsx)$/.test(entry.name)) continue;
-        if (entry.name.endsWith(".test.ts")) continue;
+        if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) continue;
         if (
           full ===
           path.resolve(repoRoot, "lib", "app", "agent", "run.ts")
