@@ -1,5 +1,6 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 
 import { readJsonIfPresent, writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
 import { cacheRoot } from "@/lib/adapters/cache/paths";
@@ -41,6 +42,54 @@ export type IngestCsvDeps = {
 };
 
 const CSV_ROWS_NAMESPACE = "csv-rows";
+
+// Mirrors `BidRow` from `lib/domain/types.ts`. Strict so unknown keys in a
+// drifted on-disk payload fail closed and force a re-parse. The same shape is
+// re-declared in `lib/adapters/vector-store/in-memory.ts`'s hydrate path; both
+// readers must move together if `BidRow` changes.
+const bidRowSchema = z
+  .object({
+    rowId: z.number().int(),
+    projectId: z.string(),
+    county: z.string().optional(),
+    letDate: z.string().optional(),
+    itemNo: z.string(),
+    itemDesc: z.string(),
+    unit: z.string(),
+    qty: z.number(),
+    bidder: z.string(),
+    bidRank: z.number().optional(),
+    unitPrice: z.number(),
+    extAmt: z.number(),
+    bidTotal: z.number().optional(),
+    raw: z.record(z.string(), z.string()),
+  })
+  .strict();
+
+const columnMapSchema = z
+  .object({
+    projectId: z.string(),
+    itemNo: z.string(),
+    itemDesc: z.string(),
+    unit: z.string(),
+    qty: z.string(),
+    unitPrice: z.string(),
+    bidder: z.string(),
+    county: z.string().optional(),
+    letDate: z.string().optional(),
+    bidRank: z.string().optional(),
+    extAmt: z.string().optional(),
+    bidTotal: z.string().optional(),
+  })
+  .strict();
+
+const persistedCsvRowsSchema = z
+  .object({
+    rows: z.array(bidRowSchema),
+    columnMap: columnMapSchema,
+    unmapped: z.array(z.string()),
+  })
+  .strict();
 
 type PersistedCsvRows = {
   rows: BidRow[];
@@ -226,16 +275,42 @@ async function defaultLoadCsvRows(
   fileHash: string,
   baseDir?: string,
 ): Promise<ParseResult | null> {
-  const persisted = await readJsonIfPresent<PersistedCsvRows>(
-    csvRowsCachePath(fileHash, baseDir),
-  );
-  if (!persisted) return null;
+  const filePath = csvRowsCachePath(fileHash, baseDir);
+  let raw: unknown;
+  try {
+    raw = await readJsonIfPresent<unknown>(filePath);
+  } catch (cause) {
+    logCsvRowsCacheSkip(filePath, "read-error", describeError(cause));
+    return null;
+  }
+  if (raw === null) return null;
+  const parsed = persistedCsvRowsSchema.safeParse(raw);
+  if (!parsed.success) {
+    logCsvRowsCacheSkip(filePath, "schema-invalid", parsed.error.message);
+    return null;
+  }
   return {
-    rows: persisted.rows,
-    columnMap: persisted.columnMap,
-    unmapped: persisted.unmapped,
+    rows: parsed.data.rows,
+    columnMap: parsed.data.columnMap,
+    unmapped: parsed.data.unmapped,
     errors: [],
   };
+}
+
+function logCsvRowsCacheSkip(
+  filePath: string,
+  reason: "schema-invalid" | "read-error",
+  detail: string,
+): void {
+  console.error(
+    JSON.stringify({
+      scope: "ingest-csv",
+      event: "skip",
+      reason,
+      filePath,
+      detail,
+    }),
+  );
 }
 
 async function defaultPersistCsvRows(

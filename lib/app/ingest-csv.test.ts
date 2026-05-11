@@ -1,11 +1,17 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
 import type { EmbeddingsPort } from "@/lib/domain/ports/embeddings-port";
 import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 import type { Chunk, IngestEvent, ParseResult } from "@/lib/domain/types";
 
 import { clearCsvRowCache, getCsvRows } from "./csv-row-cache";
 import {
+  csvRowsCachePath,
   ingestCsv,
   rehydrateCsvRowsFromDisk,
   type IngestCsvDeps,
@@ -486,6 +492,138 @@ describe("rehydrateCsvRowsFromDisk", () => {
     const ok = await rehydrateCsvRowsFromDisk("hash-missing", { loadCsvRows });
     expect(ok).toBe(false);
     expect(getCsvRows("hash-missing")).toBeUndefined();
+  });
+
+  it("returns false, logs a skip, and leaves the cache empty when the on-disk payload fails schema validation", async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), "ingest-csv-schema-"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fileHash = "hash-bad-schema";
+      // Drop `unitPrice` — the field whose `undefined` value would break
+      // `find_outliers` arithmetic if accepted blindly.
+      const corrupt = {
+        rows: [
+          {
+            rowId: 1,
+            projectId: "P1",
+            itemNo: "10100",
+            itemDesc: "desc",
+            unit: "LS",
+            qty: 1,
+            bidder: "ACME",
+            extAmt: 10,
+            raw: {},
+          },
+        ],
+        columnMap: {
+          projectId: "PROJ_ID",
+          itemNo: "ITEM_NO",
+          itemDesc: "ITEM_DESC",
+          unit: "UNIT",
+          qty: "QTY",
+          unitPrice: "UNIT_PR",
+          bidder: "BIDDER",
+        },
+        unmapped: [],
+      };
+      await writeJsonAtomic(csvRowsCachePath(fileHash, cacheDir), corrupt);
+
+      const ok = await rehydrateCsvRowsFromDisk(fileHash, {
+        cacheBaseDir: cacheDir,
+      });
+
+      expect(ok).toBe(false);
+      expect(getCsvRows(fileHash)).toBeUndefined();
+      const skipLogged = consoleSpy.mock.calls.some((args) => {
+        const first = args[0];
+        return (
+          typeof first === "string" &&
+          first.includes('"event":"skip"') &&
+          first.includes('"reason":"schema-invalid"') &&
+          first.includes('"scope":"ingest-csv"')
+        );
+      });
+      expect(skipLogged).toBe(true);
+    } finally {
+      consoleSpy.mockRestore();
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns false, logs a skip, and leaves the cache empty when the on-disk payload is unparseable JSON", async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), "ingest-csv-badjson-"));
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fileHash = "hash-bad-json";
+      const cachePath = csvRowsCachePath(fileHash, cacheDir);
+      await mkdir(path.dirname(cachePath), { recursive: true });
+      await writeFile(cachePath, "{ not valid json", { encoding: "utf8" });
+
+      const ok = await rehydrateCsvRowsFromDisk(fileHash, {
+        cacheBaseDir: cacheDir,
+      });
+
+      expect(ok).toBe(false);
+      expect(getCsvRows(fileHash)).toBeUndefined();
+      const skipLogged = consoleSpy.mock.calls.some((args) => {
+        const first = args[0];
+        return (
+          typeof first === "string" &&
+          first.includes('"event":"skip"') &&
+          first.includes('"reason":"read-error"') &&
+          first.includes('"scope":"ingest-csv"')
+        );
+      });
+      expect(skipLogged).toBe(true);
+    } finally {
+      consoleSpy.mockRestore();
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rehydrates from a well-formed on-disk payload written via the default persister", async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), "ingest-csv-good-"));
+    try {
+      const fileHash = "hash-good";
+      const payload = {
+        rows: [
+          {
+            rowId: 1,
+            projectId: "P1",
+            itemNo: "10100",
+            itemDesc: "desc",
+            unit: "LS",
+            qty: 1,
+            bidder: "ACME",
+            unitPrice: 10,
+            extAmt: 10,
+            raw: {},
+          },
+        ],
+        columnMap: {
+          projectId: "PROJ_ID",
+          itemNo: "ITEM_NO",
+          itemDesc: "ITEM_DESC",
+          unit: "UNIT",
+          qty: "QTY",
+          unitPrice: "UNIT_PR",
+          bidder: "BIDDER",
+        },
+        unmapped: [],
+      };
+      await writeJsonAtomic(csvRowsCachePath(fileHash, cacheDir), payload);
+
+      const ok = await rehydrateCsvRowsFromDisk(fileHash, {
+        cacheBaseDir: cacheDir,
+      });
+
+      expect(ok).toBe(true);
+      const cached = getCsvRows(fileHash);
+      expect(cached?.rows).toHaveLength(1);
+      expect(cached?.rows[0]?.unitPrice).toBe(10);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
   });
 
   it("is a no-op when the in-memory cache already has the rows", async () => {
