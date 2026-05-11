@@ -56,9 +56,10 @@ describe("port contracts", () => {
       }),
     };
     const pdfText: PdfTextPort = {
-      extractPages: async ({ pdf, file }) => [
-        { page: 1, text: `${file}:${pdf.byteLength}`, usable: true },
-      ],
+      extractPages: async ({ pdf, file }) => ({
+        pages: [{ page: 1, text: `${file}:${pdf.byteLength}`, usable: true }],
+        errors: [],
+      }),
     };
     const ocrResult = await ocr.extractPageText({
       pageImage: new Uint8Array([1, 2, 3]),
@@ -69,8 +70,9 @@ describe("port contracts", () => {
       pdf: new Uint8Array([0, 0]),
       file: "specs.pdf",
     });
-    expect(pdfResult).toEqual([
-      { page: 1, text: "specs.pdf:2", usable: true },
-    ]);
+    expect(pdfResult).toEqual({
+      pages: [{ page: 1, text: "specs.pdf:2", usable: true }],
+      errors: [],
+    });
   });
 });

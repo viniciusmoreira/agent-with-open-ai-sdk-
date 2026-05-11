@@ -1,3 +1,5 @@
+import type { DomainError } from "../types";
+
 export type PdfPageText = {
   page: number;
   text: string;
@@ -9,6 +11,11 @@ export type PdfTextInput = {
   file: string;
 };
 
+export type PdfTextResult = {
+  pages: PdfPageText[];
+  errors: DomainError[];
+};
+
 export interface PdfTextPort {
-  extractPages(input: PdfTextInput): Promise<PdfPageText[]>;
+  extractPages(input: PdfTextInput): Promise<PdfTextResult>;
 }

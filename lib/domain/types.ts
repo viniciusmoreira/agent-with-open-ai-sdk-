@@ -83,6 +83,13 @@ export type DomainError =
   | { kind: "parse"; message: string; detail?: unknown }
   | { kind: "embedding"; message: string; cause?: unknown }
   | { kind: "ocr"; message: string; page?: number; cause?: unknown }
+  | {
+      kind: "pdf";
+      message: string;
+      file?: string;
+      page?: number;
+      cause?: unknown;
+    }
   | { kind: "vector-store"; message: string; cause?: unknown }
   | { kind: "cache"; message: string; path?: string; cause?: unknown }
   | { kind: "validation"; message: string; field?: string };
