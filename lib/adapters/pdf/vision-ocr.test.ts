@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -155,6 +155,67 @@ describe("createVisionOcr.extractPageText", () => {
     await expect(readFile(ocrCachePath(hash, tmp), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
+  });
+
+  it("treats a schema-invalid cache file as a miss, refreshes via Vision, and rewrites the cache", async () => {
+    const image = fakeImage("schema-invalid");
+    const hash = createHash("sha256").update(image).digest("hex");
+    const cachePath = ocrCachePath(hash, tmp);
+    // Pre-seed a payload missing the required `text` field — what
+    // `readJsonIfPresent` would return after schema drift or hand edit.
+    await mkdir(path.dirname(cachePath), { recursive: true });
+    await writeFile(cachePath, JSON.stringify({ pageImageHash: hash, model: "gpt-4o-mini" }), "utf8");
+
+    createSpy.mockResolvedValue(visionResponse("fresh text"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const adapter = createVisionOcr({ model: "gpt-4o-mini", cacheBase: tmp });
+
+      const out = await adapter.extractPageText({ pageImage: image, page: 4 });
+
+      expect(out).toEqual({ text: "fresh text", cached: false });
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      const log = errSpy.mock.calls.map((c) => c[0]).find(
+        (s): s is string => typeof s === "string" && s.includes('"event":"skip"'),
+      );
+      expect(log).toBeDefined();
+      expect(log).toContain('"reason":"schema-invalid"');
+      expect(log).toContain('"scope":"ocr-cache"');
+
+      const cached = JSON.parse(await readFile(cachePath, "utf8")) as CachedOcrPayload;
+      expect(cached).toEqual({ pageImageHash: hash, model: "gpt-4o-mini", text: "fresh text" });
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it("treats a model-mismatch cache file as a miss and rewrites with the configured model", async () => {
+    const image = fakeImage("model-mismatch");
+    const hash = createHash("sha256").update(image).digest("hex");
+    await writeJsonAtomic<CachedOcrPayload>(ocrCachePath(hash, tmp), {
+      pageImageHash: hash,
+      model: "gpt-4o-mini",
+      text: "stale-from-old-model",
+    });
+    createSpy.mockResolvedValue(visionResponse("from new model"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const adapter = createVisionOcr({ model: "gpt-4o", cacheBase: tmp });
+
+      const out = await adapter.extractPageText({ pageImage: image, page: 11 });
+
+      expect(out).toEqual({ text: "from new model", cached: false });
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      const log = errSpy.mock.calls.map((c) => c[0]).find(
+        (s): s is string => typeof s === "string" && s.includes('"event":"skip"'),
+      );
+      expect(log).toContain('"reason":"model-mismatch"');
+
+      const refreshed = JSON.parse(await readFile(ocrCachePath(hash, tmp), "utf8")) as CachedOcrPayload;
+      expect(refreshed).toEqual({ pageImageHash: hash, model: "gpt-4o", text: "from new model" });
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
   it("surfaces missing message content as a DomainError(kind: 'ocr')", async () => {

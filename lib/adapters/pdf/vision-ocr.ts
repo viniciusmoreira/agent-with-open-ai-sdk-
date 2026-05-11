@@ -2,6 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { APIError } from "openai";
 import { pdfToPng } from "pdf-to-png-converter";
+import { z } from "zod";
 
 import { readJsonIfPresent, writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
 import { ocrCachePath } from "@/lib/adapters/cache/paths";
@@ -20,11 +21,15 @@ export const VISION_PROMPT =
 const DEFAULT_VIEWPORT_SCALE = 2.0;
 const RETRY_DELAYS_MS = [500, 1000, 2000] as const;
 
-export type CachedOcrPayload = {
-  pageImageHash: string;
-  model: string;
-  text: string;
-};
+const cachedOcrSchema = z
+  .object({
+    pageImageHash: z.string().min(1),
+    model: z.string().min(1),
+    text: z.string(),
+  })
+  .strict();
+
+export type CachedOcrPayload = z.infer<typeof cachedOcrSchema>;
 
 export type VisionOcrOptions = {
   /** Override the Vision model (defaults to the env-configured `VISION_OCR_MODEL`). */
@@ -54,7 +59,7 @@ export function createVisionOcr(options: VisionOcrOptions = {}): OcrPort {
       const hash = sha256(input.pageImage);
       const cachePath = ocrCachePath(hash, options.cacheBase);
 
-      const cached = await readJsonIfPresent<CachedOcrPayload>(cachePath);
+      const cached = await readCachedOcr(cachePath, model);
       if (cached) return { text: cached.text, cached: true };
 
       const text = await callVision({
@@ -220,6 +225,49 @@ function isRetryable(err: unknown): boolean {
   const status = err.status;
   if (typeof status !== "number") return false;
   return status === 429 || (status >= 500 && status < 600);
+}
+
+async function readCachedOcr(
+  cachePath: string,
+  expectedModel: string,
+): Promise<CachedOcrPayload | null> {
+  try {
+    const raw = await readJsonIfPresent<unknown>(cachePath);
+    if (raw === null) return null;
+    const parsed = cachedOcrSchema.safeParse(raw);
+    if (!parsed.success) {
+      logOcrCacheSkip(cachePath, "schema-invalid", parsed.error.message);
+      return null;
+    }
+    if (parsed.data.model !== expectedModel) {
+      logOcrCacheSkip(
+        cachePath,
+        "model-mismatch",
+        `expected ${expectedModel}, got ${parsed.data.model}`,
+      );
+      return null;
+    }
+    return parsed.data;
+  } catch (cause) {
+    logOcrCacheSkip(cachePath, "read-error", describe(cause));
+    return null;
+  }
+}
+
+function logOcrCacheSkip(
+  filePath: string,
+  reason: "schema-invalid" | "model-mismatch" | "read-error",
+  detail: string,
+): void {
+  console.error(
+    JSON.stringify({
+      scope: "ocr-cache",
+      event: "skip",
+      reason,
+      filePath,
+      detail,
+    }),
+  );
 }
 
 function sha256(bytes: Uint8Array): string {
