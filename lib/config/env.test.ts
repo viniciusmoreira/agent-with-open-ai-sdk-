@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { loadEnv } from "./env";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getEnv, loadEnv } from "./env";
 
 describe("loadEnv", () => {
   it("returns a typed env when all required keys are present", () => {
@@ -30,5 +30,40 @@ describe("loadEnv", () => {
 
   it("throws when OPENAI_API_KEY is an empty string", () => {
     expect(() => loadEnv({ OPENAI_API_KEY: "" })).toThrow(/OPENAI_API_KEY/);
+  });
+});
+
+describe("getEnv", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    process.env.OPENAI_API_KEY = "sk-test-getenv";
+    delete process.env.EMBEDDING_MODEL;
+    delete process.env.REASONING_MODEL;
+    delete process.env.VISION_OCR_MODEL;
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("reads from process.env on first call and caches the result", async () => {
+    vi.resetModules();
+    const mod = await import("./env");
+    const first = mod.getEnv();
+    expect(first.OPENAI_API_KEY).toBe("sk-test-getenv");
+    expect(first.EMBEDDING_MODEL).toBe("text-embedding-3-small");
+
+    process.env.OPENAI_API_KEY = "sk-different";
+    const second = mod.getEnv();
+    expect(second).toBe(first);
+    expect(second.OPENAI_API_KEY).toBe("sk-test-getenv");
+  });
+
+  it("exposes the same module-level cache to repeat callers", () => {
+    process.env.OPENAI_API_KEY = "sk-cached";
+    const first = getEnv();
+    const second = getEnv();
+    expect(second).toBe(first);
   });
 });
