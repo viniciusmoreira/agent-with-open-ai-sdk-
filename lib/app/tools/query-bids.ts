@@ -50,10 +50,10 @@ const DESCRIPTION = [
   "Deterministic queries over the parsed bid-tabulation CSV.",
   "Use for structural or numeric questions: ranking by amount, totalling a project, filtering by bidder or item number.",
   "Operations:",
-  "  - top_n_by_amount: returns the rows with the largest extAmt (extended amount). Accepts optional `n` (default 5).",
+  "  - top_n_by_amount: returns the rows with the largest extAmt (extended amount). Accepts optional `n` (default 5) and optional `project`, `bidder`, `itemNo` filters applied before ranking — pass them to scope the ranking to a single project, bidder, or item.",
   "  - total_by_project: sums extAmt across rows whose projectId matches the supplied `project` (case-insensitive exact match).",
-  "  - rows_by_bidder: returns rows whose bidder contains the supplied `bidder` substring (case-insensitive).",
-  "  - rows_by_item: returns rows whose itemNo matches the supplied `itemNo` (case-insensitive exact).",
+  "  - rows_by_bidder: returns rows whose bidder contains the supplied `bidder` substring (case-insensitive). Optional `itemNo` and `project` narrow the result, so you can answer 'what did Bidder X bid for Item Y?' in one call.",
+  "  - rows_by_item: returns rows whose itemNo matches the supplied `itemNo` (case-insensitive exact). Optional `bidder` and `project` narrow the result.",
   "Each returned row carries its `rowId` so callers can render citations. Prefer this tool over search_documents for any question about rankings, sums, prices, bidders, or item numbers.",
 ].join("\n");
 
@@ -92,9 +92,11 @@ export function runQuery(
   switch (input.operation) {
     case "top_n_by_amount": {
       const n = input.n ?? DEFAULT_TOP_N;
-      const result = topNByAmount(rows, n);
+      const scoped = filterRows(rows, input);
+      const result = topNByAmount(scoped, n);
+      const scope = scopeLabel(input);
       return {
-        summary: `Top ${result.length} row(s) by extended amount.`,
+        summary: `Top ${result.length} of ${scoped.length} row(s) by extended amount${scope}.`,
         rows: result.map(projectRow),
       };
     }
@@ -118,9 +120,14 @@ export function runQuery(
           rows: [],
         };
       }
-      const matched = rowsByBidder(rows, input.bidder);
+      const primary = rowsByBidder(rows, input.bidder);
+      const matched = filterRows(primary, {
+        project: input.project,
+        itemNo: input.itemNo,
+      });
+      const scope = scopeLabel({ project: input.project, itemNo: input.itemNo });
       return {
-        summary: `${matched.length} row(s) match bidder '${input.bidder}'.`,
+        summary: `${matched.length} row(s) match bidder '${input.bidder}'${scope}.`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
       };
     }
@@ -131,13 +138,55 @@ export function runQuery(
           rows: [],
         };
       }
-      const matched = rowsByItem(rows, input.itemNo);
+      const primary = rowsByItem(rows, input.itemNo);
+      const matched = filterRows(primary, {
+        project: input.project,
+        bidder: input.bidder,
+      });
+      const scope = scopeLabel({ project: input.project, bidder: input.bidder });
       return {
-        summary: `${matched.length} row(s) match itemNo '${input.itemNo}'.`,
+        summary: `${matched.length} row(s) match itemNo '${input.itemNo}'${scope}.`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
       };
     }
   }
+}
+
+type RowFilter = {
+  project?: string;
+  bidder?: string;
+  itemNo?: string;
+};
+
+function filterRows(rows: readonly BidRow[], filter: RowFilter): BidRow[] {
+  const project = normalizeOrUndefined(filter.project);
+  const bidder = normalizeOrUndefined(filter.bidder);
+  const itemNo = normalizeOrUndefined(filter.itemNo);
+  if (!project && !bidder && !itemNo) return [...rows];
+  return rows.filter((row) => {
+    if (project && normalize(row.projectId) !== project) return false;
+    if (itemNo && normalize(row.itemNo) !== itemNo) return false;
+    if (bidder && !normalize(row.bidder).includes(bidder)) return false;
+    return true;
+  });
+}
+
+function scopeLabel(filter: RowFilter): string {
+  const parts: string[] = [];
+  if (filter.project) parts.push(`project '${filter.project}'`);
+  if (filter.bidder) parts.push(`bidder '${filter.bidder}'`);
+  if (filter.itemNo) parts.push(`itemNo '${filter.itemNo}'`);
+  return parts.length === 0 ? "" : ` (scoped to ${parts.join(", ")})`;
+}
+
+function normalize(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function normalizeOrUndefined(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = normalize(value);
+  return normalized === "" ? undefined : normalized;
 }
 
 function projectRow(row: BidRow): QueryBidsResultRow {

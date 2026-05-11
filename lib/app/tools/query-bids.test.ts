@@ -190,3 +190,91 @@ describe("runQuery", () => {
     expect(result.rows.map((r) => r.rowId)).toEqual([3, 4]);
   });
 });
+
+describe("query_bids tool — top_n_by_amount scoping", () => {
+  it("scopes ranking to the supplied project", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "top_n_by_amount",
+      n: 5,
+      project: "PA",
+    });
+    expect(result.rows.map((r) => r.rowId)).toEqual([4, 2, 1]);
+    expect(result.summary).toMatch(/project 'PA'/);
+  });
+
+  it("scopes ranking to the supplied bidder (substring, case-insensitive)", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "top_n_by_amount",
+      n: 3,
+      bidder: "rea",
+    });
+    expect(result.rows.map((r) => r.rowId)).toEqual([4, 3]);
+  });
+
+  it("scopes ranking by itemNo, returning the highest bid for that item across bidders", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "top_n_by_amount",
+      n: 1,
+      itemNo: "100",
+    });
+    expect(result.rows.map((r) => r.rowId)).toEqual([4]);
+  });
+
+  it("intersects project + bidder filters", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "top_n_by_amount",
+      n: 5,
+      project: "PA",
+      bidder: "BLYTHE",
+    });
+    expect(result.rows.map((r) => r.rowId)).toEqual([2, 1]);
+  });
+
+  it("returns no rows when filters match nothing", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "top_n_by_amount",
+      n: 5,
+      project: "ZZZ",
+    });
+    expect(result.rows).toEqual([]);
+    expect(result.summary).toMatch(/0 of 0 row\(s\)/);
+  });
+});
+
+describe("query_bids tool — bidder/item intersection", () => {
+  it("rows_by_bidder narrows by optional itemNo (answers 'what did Bidder X bid for Item Y?')", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "rows_by_bidder",
+      bidder: "REA",
+      itemNo: "100",
+    });
+    expect(result.rows.map((r) => r.rowId)).toEqual([4]);
+    expect(result.summary).toMatch(/itemNo '100'/);
+  });
+
+  it("rows_by_item narrows by optional bidder", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "rows_by_item",
+      itemNo: "100",
+      bidder: "BLYTHE",
+    });
+    expect(result.rows.map((r) => r.rowId)).toEqual([1]);
+  });
+
+  it("rows_by_bidder narrows by optional project", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, {
+      operation: "rows_by_bidder",
+      bidder: "REA",
+      project: "PA",
+    });
+    expect(result.rows.map((r) => r.rowId)).toEqual([4]);
+  });
+});
