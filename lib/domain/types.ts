@@ -48,6 +48,24 @@ export type ParseResult = {
   errors: DomainError[];
 };
 
+export type OutlierFlag = {
+  rowId: number;
+  itemNo: string;
+  itemDesc: string;
+  unit: string;
+  bidder: string;
+  unitPrice: number;
+  groupMean: number;
+  groupCount: number;
+  deviation: number;
+};
+
+export type OutlierResult = {
+  threshold: number;
+  minPeers: number;
+  flagged: OutlierFlag[];
+};
+
 export type IngestEvent =
   | { kind: "file-start"; file: string; sizeBytes: number }
   | {
