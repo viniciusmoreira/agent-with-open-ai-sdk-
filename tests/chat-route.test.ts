@@ -34,6 +34,14 @@ function makeStreamResult(): { toUIMessageStreamResponse: ReturnType<typeof vi.f
   };
 }
 
+function uiMessage(role: "system" | "user" | "assistant", text: string) {
+  return {
+    id: `${role}-${text.length}`,
+    role,
+    parts: [{ type: "text", text }],
+  };
+}
+
 beforeEach(() => {
   process.env = { ...ORIGINAL_ENV, OPENAI_API_KEY: "sk-test-route" };
   hydrateMock.mockClear();
@@ -87,12 +95,92 @@ describe("POST /api/chat — request validation", () => {
     const { POST } = await importRoute();
     const req = new Request("http://localhost/api/chat", {
       method: "POST",
-      body: JSON.stringify({ messages: [{ role: "user" }], extra: "nope" }),
+      body: JSON.stringify({ messages: [uiMessage("user", "hi")], extra: "nope" }),
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
     expect(res.status).toBe(400);
     expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects messages with an invalid role with HTTP 400", async () => {
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        messages: [{ id: "x", role: "tool", parts: [{ type: "text", text: "hi" }] }],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects messages with missing or empty parts with HTTP 400", async () => {
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages: [{ role: "user", parts: [] }] }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects parts without a string 'type' discriminator with HTTP 400", async () => {
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        messages: [{ role: "user", parts: [{ text: "hi" }] }],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects transcripts longer than the max-messages cap with HTTP 400", async () => {
+    const { POST } = await importRoute();
+    const messages = Array.from({ length: 201 }, () => uiMessage("user", "hi"));
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects transcripts that exceed the max payload size with HTTP 413", async () => {
+    const { POST } = await importRoute();
+    const big = "a".repeat(210_000);
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages: [uiMessage("user", big)] }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("returns HTTP 400 when runAgent throws while converting messages", async () => {
+    runAgentMock.mockRejectedValueOnce(new Error("invalid UI message"));
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages: [uiMessage("user", "hi")] }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/could not be converted/i);
   });
 });
 
@@ -109,7 +197,7 @@ describe("POST /api/chat — happy path", () => {
     const { POST } = await importRoute();
     const req = new Request("http://localhost/api/chat", {
       method: "POST",
-      body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+      body: JSON.stringify({ messages: [uiMessage("user", "hi")] }),
       headers: { "Content-Type": "application/json" },
     });
     await POST(req);
@@ -122,7 +210,7 @@ describe("POST /api/chat — happy path", () => {
     const { POST } = await importRoute();
     const req = new Request("http://localhost/api/chat", {
       method: "POST",
-      body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+      body: JSON.stringify({ messages: [uiMessage("user", "hi")] }),
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
@@ -134,9 +222,7 @@ describe("POST /api/chat — happy path", () => {
   it("passes the validated messages array through to runAgent", async () => {
     runAgentMock.mockResolvedValueOnce(makeStreamResult());
     const { POST } = await importRoute();
-    const messages = [
-      { role: "user", content: "Top five most expensive items?" },
-    ];
+    const messages = [uiMessage("user", "Top five most expensive items?")];
     const req = new Request("http://localhost/api/chat", {
       method: "POST",
       body: JSON.stringify({ messages }),
