@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Chunk, SourceRef } from "@/lib/domain/types";
 import {
@@ -313,6 +313,129 @@ describe("InMemoryVectorStore.hydrate", () => {
     });
     await Promise.all([store.hydrate(), store.hydrate(), store.hydrate()]);
     expect(store.search([1, 0], 100)).toHaveLength(1);
+  });
+});
+
+describe("InMemoryVectorStore.hydrate defensive validation", () => {
+  let workDir: string;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(path.join(tmpdir(), "vstore-defensive-"));
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    errorSpy.mockRestore();
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  async function writeRaw(name: string, body: string) {
+    const dir = embeddingsCacheDir(workDir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, name), body, "utf8");
+  }
+
+  it("skips malformed JSON without throwing", async () => {
+    await writeRaw(`bad-${MODEL}.json`, "{not valid json");
+    const store = new InMemoryVectorStore({
+      embeddingModel: MODEL,
+      cacheBaseDir: workDir,
+    });
+    await expect(store.hydrate()).resolves.toBeUndefined();
+    expect(store.has("bad")).toBe(false);
+    expect(errorSpy).toHaveBeenCalled();
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as {
+      scope: string;
+      reason: string;
+    };
+    expect(logged.scope).toBe("vector-store-hydrate");
+    expect(logged.reason).toBe("read-error");
+  });
+
+  it("skips files whose payload fails schema validation", async () => {
+    await writeRaw(
+      `drifted-${MODEL}.json`,
+      JSON.stringify({
+        fileHash: "drifted",
+        model: MODEL,
+        chunks: [
+          {
+            id: "c1",
+            text: "hello",
+            vector: [0.1, 0.2],
+            // sourceRef intentionally missing required `rowId`
+            sourceRef: { type: "csv-row", file: "f.csv" },
+          },
+        ],
+      }),
+    );
+    const store = new InMemoryVectorStore({
+      embeddingModel: MODEL,
+      cacheBaseDir: workDir,
+    });
+    await store.hydrate();
+    expect(store.has("drifted")).toBe(false);
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as {
+      reason: string;
+    };
+    expect(logged.reason).toBe("schema-invalid");
+  });
+
+  it("skips envelopes whose embedded model disagrees with the active model", async () => {
+    await writeRaw(
+      `wrong-${MODEL}.json`,
+      JSON.stringify({
+        fileHash: "wrong",
+        model: "some-other-model",
+        chunks: [
+          {
+            id: "c1",
+            text: "hello",
+            vector: [0.1, 0.2],
+            sourceRef: { type: "csv-row", file: "f.csv", rowId: 1 },
+          },
+        ],
+      }),
+    );
+    const store = new InMemoryVectorStore({
+      embeddingModel: MODEL,
+      cacheBaseDir: workDir,
+    });
+    await store.hydrate();
+    expect(store.has("wrong")).toBe(false);
+    const logged = JSON.parse(String(errorSpy.mock.calls[0]?.[0])) as {
+      reason: string;
+    };
+    expect(logged.reason).toBe("model-mismatch");
+  });
+
+  it("loads valid files even when sibling files are corrupt", async () => {
+    await writeRaw(`broken-${MODEL}.json`, "}{");
+    await writeRaw(
+      `good-${MODEL}.json`,
+      JSON.stringify({
+        fileHash: "good",
+        model: MODEL,
+        chunks: [
+          {
+            id: "g1",
+            text: "good chunk",
+            vector: [1, 0, 0],
+            sourceRef: { type: "csv-row", file: "f.csv", rowId: 1 },
+          },
+        ],
+      }),
+    );
+    const store = new InMemoryVectorStore({
+      embeddingModel: MODEL,
+      cacheBaseDir: workDir,
+    });
+    await store.hydrate();
+    expect(store.has("broken")).toBe(false);
+    expect(store.has("good")).toBe(true);
+    const hits = store.search([1, 0, 0], 5);
+    expect(hits.map((c) => c.id)).toEqual(["g1"]);
   });
 });
 

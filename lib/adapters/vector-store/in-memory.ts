@@ -1,7 +1,8 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { z } from "zod";
 
-import type { Chunk, SourceRef } from "@/lib/domain/types";
+import type { Chunk } from "@/lib/domain/types";
 import type { SourceFilter, VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 import { readJsonIfPresent, writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
 import {
@@ -10,18 +11,43 @@ import {
 } from "@/lib/adapters/cache/paths";
 import { getEnv } from "@/lib/config/env";
 
-type PersistedChunk = {
-  id: string;
-  text: string;
-  vector: number[];
-  sourceRef: SourceRef;
-};
+const sourceRefSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("csv-row"),
+      file: z.string().min(1),
+      rowId: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("pdf-page"),
+      file: z.string().min(1),
+      page: z.number().int().nonnegative(),
+      chunkIndex: z.number().int().nonnegative(),
+    })
+    .strict(),
+]);
 
-type CacheFile = {
-  fileHash: string;
-  model: string;
-  chunks: PersistedChunk[];
-};
+const persistedChunkSchema = z
+  .object({
+    id: z.string().min(1),
+    text: z.string(),
+    vector: z.array(z.number()),
+    sourceRef: sourceRefSchema,
+  })
+  .strict();
+
+const cacheFileSchema = z
+  .object({
+    fileHash: z.string().min(1),
+    model: z.string().min(1),
+    chunks: z.array(persistedChunkSchema),
+  })
+  .strict();
+
+type PersistedChunk = z.infer<typeof persistedChunkSchema>;
+type CacheFile = z.infer<typeof cacheFileSchema>;
 
 export type InMemoryVectorStoreOptions = {
   embeddingModel?: string;
@@ -100,10 +126,27 @@ export class InMemoryVectorStore implements VectorStorePort {
     for (const entry of entries) {
       if (!entry.endsWith(suffix)) continue;
       const filePath = path.join(dir, entry);
-      const data = await readJsonIfPresent<CacheFile>(filePath);
-      if (!data) continue;
-      const chunks = data.chunks.map(toChunk);
-      this.byFileHash.set(data.fileHash, chunks);
+      try {
+        const raw = await readJsonIfPresent<unknown>(filePath);
+        if (raw === null) continue;
+        const parsed = cacheFileSchema.safeParse(raw);
+        if (!parsed.success) {
+          logHydrateSkip(filePath, "schema-invalid", parsed.error.message);
+          continue;
+        }
+        if (parsed.data.model !== this.model) {
+          logHydrateSkip(
+            filePath,
+            "model-mismatch",
+            `expected ${this.model}, got ${parsed.data.model}`,
+          );
+          continue;
+        }
+        const chunks = parsed.data.chunks.map(toChunk);
+        this.byFileHash.set(parsed.data.fileHash, chunks);
+      } catch (cause) {
+        logHydrateSkip(filePath, "read-error", describeError(cause));
+      }
     }
     this.hydrated = true;
   }
@@ -174,6 +217,32 @@ function isNotFound(err: unknown): boolean {
     "code" in err &&
     (err as { code?: unknown }).code === "ENOENT"
   );
+}
+
+function logHydrateSkip(
+  filePath: string,
+  reason: "schema-invalid" | "model-mismatch" | "read-error",
+  detail: string,
+): void {
+  console.error(
+    JSON.stringify({
+      scope: "vector-store-hydrate",
+      event: "skip",
+      reason,
+      filePath,
+      detail,
+    }),
+  );
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
 }
 
 export const store = new InMemoryVectorStore();
