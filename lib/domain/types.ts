@@ -76,8 +76,14 @@ export type IngestEvent =
       path: "text" | "vision";
     }
   | { kind: "csv-progress"; file: string; rows: number }
-  | { kind: "file-done"; file: string; chunks: number; cached: boolean }
-  | { kind: "file-error"; file: string; message: string };
+  | {
+      kind: "file-done";
+      file: string;
+      chunks: number;
+      cached: boolean;
+      unmapped?: string[];
+    }
+  | { kind: "file-error"; file: string; message: string; detail?: unknown };
 
 export type DomainError =
   | { kind: "parse"; message: string; detail?: unknown }
