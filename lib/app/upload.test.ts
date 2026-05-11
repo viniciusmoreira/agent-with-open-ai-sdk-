@@ -59,12 +59,14 @@ function makeDeps(
   mkdirs: string[];
   runs: DispatchedRun[];
   rehydrate: ReturnType<typeof vi.fn>;
+  unlinks: string[];
 } {
   const csv = vi.fn<UploadIngestFn>(async () => {});
   const pdf = vi.fn<UploadIngestFn>(async () => {});
   const writes: Array<{ filePath: string; bytes: Uint8Array }> = [];
   const mkdirs: string[] = [];
   const runs: DispatchedRun[] = [];
+  const unlinks: string[] = [];
   const rehydrate = vi.fn<(fileHash: string) => Promise<boolean>>(
     async () => true,
   );
@@ -80,13 +82,16 @@ function makeDeps(
     writeFile: async (filePath, bytes) => {
       writes.push({ filePath, bytes });
     },
+    unlink: async (filePath) => {
+      unlinks.push(filePath);
+    },
     dispatch: (run) => {
       runs.push(run);
     },
     rehydrateCsvRows: rehydrate,
     ...overrides,
   };
-  return { deps, csv, pdf, writes, mkdirs, runs, rehydrate };
+  return { deps, csv, pdf, writes, mkdirs, runs, rehydrate, unlinks };
 }
 
 function uploadRequest(
@@ -300,6 +305,78 @@ describe("handleUpload", () => {
     const { deps, runs } = makeDeps({
       ingestCsv: async () => {
         throw new Error("kaboom");
+      },
+    });
+    const res = await handleUpload(
+      uploadRequest(new Blob([CSV_TEXT]), "bids.csv"),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    await runs[0]!();
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    consoleSpy.mockRestore();
+  });
+
+  it("unlinks the staged temp file after a successful ingestion", async () => {
+    const { deps, runs, writes, unlinks } = makeDeps();
+    const res = await handleUpload(
+      uploadRequest(new Blob([CSV_TEXT]), "bids.csv"),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    await runs[0]!();
+    expect(unlinks).toEqual([writes[0]!.filePath]);
+  });
+
+  it("unlinks the staged temp file even when ingestion throws", async () => {
+    const consoleSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { deps, runs, writes, unlinks } = makeDeps({
+      ingestCsv: async () => {
+        throw new Error("kaboom");
+      },
+    });
+    const res = await handleUpload(
+      uploadRequest(new Blob([CSV_TEXT]), "bids.csv"),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    await runs[0]!();
+    expect(unlinks).toEqual([writes[0]!.filePath]);
+    consoleSpy.mockRestore();
+  });
+
+  it("ignores ENOENT from unlink without logging", async () => {
+    const consoleSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { deps, runs } = makeDeps({
+      unlink: async () => {
+        const err = new Error("missing") as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      },
+    });
+    const res = await handleUpload(
+      uploadRequest(new Blob([CSV_TEXT]), "bids.csv"),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    await runs[0]!();
+    expect(consoleSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it("logs but swallows non-ENOENT unlink errors", async () => {
+    const consoleSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { deps, runs } = makeDeps({
+      unlink: async () => {
+        const err = new Error("denied") as NodeJS.ErrnoException;
+        err.code = "EACCES";
+        throw err;
       },
     });
     const res = await handleUpload(

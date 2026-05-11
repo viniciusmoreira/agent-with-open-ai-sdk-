@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir as fsMkdir, writeFile as fsWriteFile } from "node:fs/promises";
+import {
+  mkdir as fsMkdir,
+  unlink as fsUnlink,
+  writeFile as fsWriteFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { getEnv } from "@/lib/config/env";
@@ -22,6 +26,11 @@ export type UploadDeps = {
   tmpDir?: string;
   mkdir?: (dir: string, opts: { recursive: boolean }) => Promise<unknown>;
   writeFile?: (filePath: string, data: Uint8Array) => Promise<void>;
+  /**
+   * Removes the staged temp file once ingestion settles. Defaults to
+   * `fs.unlink`; tests override it to assert cleanup without touching disk.
+   */
+  unlink?: (filePath: string) => Promise<void>;
   /**
    * Called instead of the module-level bounded dispatcher. Test seam so tests
    * can await dispatch or assert queueing without spinning up real timers.
@@ -51,6 +60,7 @@ export async function handleUpload(
 ): Promise<Response> {
   const writeFile = deps.writeFile ?? defaultWriteFile;
   const mkdir = deps.mkdir ?? defaultMkdir;
+  const unlink = deps.unlink ?? defaultUnlink;
   const tmpDir = deps.tmpDir ?? path.join(process.cwd(), "tmp");
   const dispatch = deps.dispatch ?? defaultDispatch;
 
@@ -127,6 +137,25 @@ export async function handleUpload(
           error: err instanceof Error ? err.message : String(err),
         }),
       );
+    } finally {
+      try {
+        await unlink(targetPath);
+      } catch (cleanupErr) {
+        if (!isMissingFileError(cleanupErr)) {
+          console.error(
+            JSON.stringify({
+              scope: "upload-dispatch",
+              message: "temp cleanup failed",
+              kind,
+              fileHash,
+              error:
+                cleanupErr instanceof Error
+                  ? cleanupErr.message
+                  : String(cleanupErr),
+            }),
+          );
+        }
+      }
     }
   });
 
@@ -262,4 +291,17 @@ function defaultMkdir(
 
 function defaultWriteFile(filePath: string, data: Uint8Array): Promise<void> {
   return fsWriteFile(filePath, data);
+}
+
+function defaultUnlink(filePath: string): Promise<void> {
+  return fsUnlink(filePath);
+}
+
+function isMissingFileError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: unknown }).code === "ENOENT"
+  );
 }
