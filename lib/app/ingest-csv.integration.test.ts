@@ -53,7 +53,7 @@ describe("ingestCsv integration (sample_bid_tabulation.csv)", () => {
         SAMPLE_CSV,
         fileHash,
         (e) => events.push(e),
-        { embeddings, store },
+        { embeddings, store, cacheBaseDir: cacheDir },
       );
 
       const kinds = events.map((e) => e.kind);
@@ -84,7 +84,7 @@ describe("ingestCsv integration (sample_bid_tabulation.csv)", () => {
         SAMPLE_CSV,
         fileHash,
         (e) => cachedEvents.push(e),
-        { embeddings, store },
+        { embeddings, store, cacheBaseDir: cacheDir },
       );
 
       const cachedKinds = cachedEvents.map((e) => e.kind);

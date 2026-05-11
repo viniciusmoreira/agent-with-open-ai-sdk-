@@ -109,6 +109,8 @@ describe("upload → ingest → SSE end-to-end (CSV)", () => {
           store,
           readFile: async (p) => new TextDecoder().decode(fakeFs.get(p)!),
           statFile: async (p) => ({ size: fakeFs.get(p)!.byteLength }),
+          persistCsvRows: async () => {},
+          loadCsvRows: async () => null,
         }),
       ingestPdf: async () => {},
     };
@@ -174,6 +176,8 @@ describe("upload → ingest → SSE end-to-end (CSV)", () => {
           store,
           readFile: async (p) => new TextDecoder().decode(fakeFs.get(p)!),
           statFile: async (p) => ({ size: fakeFs.get(p)!.byteLength }),
+          persistCsvRows: async () => {},
+          loadCsvRows: async () => null,
         }),
       ingestPdf: async () => {},
     };

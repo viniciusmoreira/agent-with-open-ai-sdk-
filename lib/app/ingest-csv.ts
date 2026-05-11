@@ -1,14 +1,33 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import path from "node:path";
 
+import { readJsonIfPresent, writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
+import { cacheRoot } from "@/lib/adapters/cache/paths";
 import type { EmbeddingsPort } from "@/lib/domain/ports/embeddings-port";
 import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
-import type { Chunk, IngestEvent, ParseResult } from "@/lib/domain/types";
+import type {
+  BidRow,
+  Chunk,
+  ColumnMap,
+  IngestEvent,
+  ParseResult,
+} from "@/lib/domain/types";
 import { parseBids } from "@/lib/domain/csv/parse";
 
-import { setCsvRows } from "./csv-row-cache";
+import { getCsvRows, setCsvRows } from "./csv-row-cache";
 
 export type IngestCsvEmit = (event: IngestEvent) => void;
+
+export type PersistCsvRowsFn = (
+  fileHash: string,
+  result: ParseResult,
+  baseDir?: string,
+) => Promise<void>;
+
+export type LoadCsvRowsFn = (
+  fileHash: string,
+  baseDir?: string,
+) => Promise<ParseResult | null>;
 
 export type IngestCsvDeps = {
   embeddings: EmbeddingsPort;
@@ -16,6 +35,17 @@ export type IngestCsvDeps = {
   readFile?: (filePath: string) => Promise<string>;
   statFile?: (filePath: string) => Promise<{ size: number }>;
   parse?: (csvText: string) => ParseResult;
+  cacheBaseDir?: string;
+  persistCsvRows?: PersistCsvRowsFn;
+  loadCsvRows?: LoadCsvRowsFn;
+};
+
+const CSV_ROWS_NAMESPACE = "csv-rows";
+
+type PersistedCsvRows = {
+  rows: BidRow[];
+  columnMap: ColumnMap;
+  unmapped: string[];
 };
 
 export async function ingestCsv(
@@ -28,6 +58,8 @@ export async function ingestCsv(
   const readFile = deps.readFile ?? defaultReadFile;
   const statFile = deps.statFile ?? defaultStat;
   const parse = deps.parse ?? parseBids;
+  const persist = deps.persistCsvRows ?? defaultPersistCsvRows;
+  const load = deps.loadCsvRows ?? defaultLoadCsvRows;
 
   let sizeBytes = 0;
   try {
@@ -46,8 +78,15 @@ export async function ingestCsv(
   emit({ kind: "file-start", file, sizeBytes });
 
   if (deps.store.has(fileHash)) {
-    emit({ kind: "file-done", file, chunks: 0, cached: true });
-    return;
+    const rehydrated = await tryLoadCsvRows(fileHash, load, deps.cacheBaseDir);
+    if (rehydrated) {
+      setCsvRows(fileHash, rehydrated);
+      emit({ kind: "file-done", file, chunks: 0, cached: true });
+      return;
+    }
+    // Row cache missing on disk — fall through to a full re-parse so that
+    // query_bids / find_outliers can still answer. Chunk IDs are deterministic,
+    // so the eventual upsert is idempotent against the existing embeddings.
   }
 
   let csvText: string;
@@ -123,6 +162,21 @@ export async function ingestCsv(
     return;
   }
 
+  try {
+    await persist(fileHash, result, deps.cacheBaseDir);
+  } catch (cause) {
+    // Persistence failure degrades the next-restart cache hit to a re-parse,
+    // but the current session is fully functional — log and continue.
+    console.error(
+      JSON.stringify({
+        scope: "ingest-csv",
+        message: "failed to persist csv row cache",
+        fileHash,
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
+    );
+  }
+
   emit({
     kind: "file-done",
     file,
@@ -130,6 +184,71 @@ export async function ingestCsv(
     cached: false,
     unmapped: result.unmapped,
   });
+}
+
+export async function rehydrateCsvRowsFromDisk(
+  fileHash: string,
+  options: { cacheBaseDir?: string; loadCsvRows?: LoadCsvRowsFn } = {},
+): Promise<boolean> {
+  if (getCsvRows(fileHash)) return true;
+  const load = options.loadCsvRows ?? defaultLoadCsvRows;
+  const parsed = await tryLoadCsvRows(fileHash, load, options.cacheBaseDir);
+  if (!parsed) return false;
+  setCsvRows(fileHash, parsed);
+  return true;
+}
+
+export function csvRowsCachePath(fileHash: string, baseDir?: string): string {
+  return path.join(cacheRoot(baseDir), CSV_ROWS_NAMESPACE, `${fileHash}.json`);
+}
+
+async function tryLoadCsvRows(
+  fileHash: string,
+  load: LoadCsvRowsFn,
+  baseDir?: string,
+): Promise<ParseResult | null> {
+  try {
+    return await load(fileHash, baseDir);
+  } catch (cause) {
+    console.error(
+      JSON.stringify({
+        scope: "ingest-csv",
+        message: "failed to load csv row cache",
+        fileHash,
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
+    );
+    return null;
+  }
+}
+
+async function defaultLoadCsvRows(
+  fileHash: string,
+  baseDir?: string,
+): Promise<ParseResult | null> {
+  const persisted = await readJsonIfPresent<PersistedCsvRows>(
+    csvRowsCachePath(fileHash, baseDir),
+  );
+  if (!persisted) return null;
+  return {
+    rows: persisted.rows,
+    columnMap: persisted.columnMap,
+    unmapped: persisted.unmapped,
+    errors: [],
+  };
+}
+
+async function defaultPersistCsvRows(
+  fileHash: string,
+  result: ParseResult,
+  baseDir?: string,
+): Promise<void> {
+  const payload: PersistedCsvRows = {
+    rows: result.rows,
+    columnMap: result.columnMap,
+    unmapped: result.unmapped,
+  };
+  await writeJsonAtomic(csvRowsCachePath(fileHash, baseDir), payload);
 }
 
 function defaultReadFile(filePath: string): Promise<string> {

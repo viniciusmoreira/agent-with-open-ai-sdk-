@@ -5,7 +5,13 @@ import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 import type { Chunk, IngestEvent, ParseResult } from "@/lib/domain/types";
 
 import { clearCsvRowCache, getCsvRows } from "./csv-row-cache";
-import { ingestCsv, type IngestCsvDeps } from "./ingest-csv";
+import {
+  ingestCsv,
+  rehydrateCsvRowsFromDisk,
+  type IngestCsvDeps,
+  type LoadCsvRowsFn,
+  type PersistCsvRowsFn,
+} from "./ingest-csv";
 
 type Recorded = IngestEvent[];
 
@@ -51,18 +57,24 @@ function makeDeps(overrides: Partial<IngestCsvDeps> = {}): {
   deps: IngestCsvDeps;
   store: StoreState;
   embed: ReturnType<typeof vi.fn>;
+  persistCsvRows: ReturnType<typeof vi.fn>;
+  loadCsvRows: ReturnType<typeof vi.fn>;
 } {
   const store = makeStore();
   const { port, embed } = makeEmbeddings();
+  const persistCsvRows = vi.fn<PersistCsvRowsFn>(async () => {});
+  const loadCsvRows = vi.fn<LoadCsvRowsFn>(async () => null);
   const deps: IngestCsvDeps = {
     embeddings: port,
     store: store.store,
     readFile: async () => "",
     statFile: async () => ({ size: 0 }),
     parse: () => ({ rows: [], columnMap: emptyColumnMap(), unmapped: [], errors: [] }),
+    persistCsvRows,
+    loadCsvRows,
     ...overrides,
   };
-  return { deps, store, embed };
+  return { deps, store, embed, persistCsvRows, loadCsvRows };
 }
 
 function emptyColumnMap() {
@@ -178,12 +190,15 @@ describe("ingestCsv", () => {
     }
   });
 
-  it("short-circuits with cached:true and skips embedding when store.has(fileHash)", async () => {
+  it("short-circuits with cached:true and skips embedding when store.has(fileHash) and the row cache is on disk", async () => {
     const events: Recorded = [];
     const store = makeStore(true);
     const { port, embed } = makeEmbeddings();
     const parse = vi.fn(() => makeParseResult(2));
     const readFile = vi.fn(async () => "csv-text");
+    const persisted = makeParseResult(2);
+    const loadCsvRows = vi.fn<LoadCsvRowsFn>(async () => persisted);
+    const persistCsvRows = vi.fn<PersistCsvRowsFn>(async () => {});
 
     await ingestCsv(
       "/tmp/cached.csv",
@@ -195,6 +210,8 @@ describe("ingestCsv", () => {
         readFile,
         statFile: async () => ({ size: 7 }),
         parse,
+        loadCsvRows,
+        persistCsvRows,
       },
     );
 
@@ -209,6 +226,99 @@ describe("ingestCsv", () => {
     expect(parse).not.toHaveBeenCalled();
     expect(readFile).not.toHaveBeenCalled();
     expect(store.upserts).toHaveLength(0);
+    expect(loadCsvRows).toHaveBeenCalledWith("hash-cached", undefined);
+    expect(persistCsvRows).not.toHaveBeenCalled();
+    expect(getCsvRows("hash-cached")?.rows).toHaveLength(2);
+  });
+
+  it("falls through to a full re-parse on cache hit when the on-disk row cache is missing", async () => {
+    const events: Recorded = [];
+    const store = makeStore(true);
+    const { port, embed } = makeEmbeddings();
+    const parsed = makeParseResult(2);
+    const parse = vi.fn(() => parsed);
+    const readFile = vi.fn(async () => "csv-text");
+    const loadCsvRows = vi.fn<LoadCsvRowsFn>(async () => null);
+    const persistCsvRows = vi.fn<PersistCsvRowsFn>(async () => {});
+
+    await ingestCsv(
+      "/tmp/cached-missing-rows.csv",
+      "hash-fallthrough",
+      (e) => events.push(e),
+      {
+        embeddings: port,
+        store: store.store,
+        readFile,
+        statFile: async () => ({ size: 7 }),
+        parse,
+        loadCsvRows,
+        persistCsvRows,
+      },
+    );
+
+    expect(events.map((e) => e.kind)).toEqual([
+      "file-start",
+      "csv-progress",
+      "file-done",
+    ]);
+    const done = events.at(-1) as Extract<IngestEvent, { kind: "file-done" }>;
+    expect(done.cached).toBe(false);
+    expect(done.chunks).toBe(2);
+    expect(loadCsvRows).toHaveBeenCalledWith("hash-fallthrough", undefined);
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect(persistCsvRows).toHaveBeenCalledWith(
+      "hash-fallthrough",
+      parsed,
+      undefined,
+    );
+    expect(getCsvRows("hash-fallthrough")?.rows).toHaveLength(2);
+  });
+
+  it("persists csv rows after a successful upsert on the happy path", async () => {
+    const events: Recorded = [];
+    const parsed = makeParseResult(2, { unmapped: ["EXTRA"] });
+    const { deps, persistCsvRows } = makeDeps({
+      readFile: async () => "csv-text",
+      statFile: async () => ({ size: 5 }),
+      parse: () => parsed,
+      cacheBaseDir: "/tmp/cache-base-test",
+    });
+
+    await ingestCsv("/tmp/happy.csv", "hash-happy", (e) => events.push(e), deps);
+
+    expect(persistCsvRows).toHaveBeenCalledTimes(1);
+    expect(persistCsvRows).toHaveBeenCalledWith(
+      "hash-happy",
+      parsed,
+      "/tmp/cache-base-test",
+    );
+    expect(events.map((e) => e.kind)).toEqual([
+      "file-start",
+      "csv-progress",
+      "file-done",
+    ]);
+  });
+
+  it("logs and continues to file-done when csv row persistence fails", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const events: Recorded = [];
+    const parsed = makeParseResult(1);
+    const { deps } = makeDeps({
+      readFile: async () => "csv-text",
+      statFile: async () => ({ size: 5 }),
+      parse: () => parsed,
+      persistCsvRows: async () => {
+        throw new Error("disk full");
+      },
+    });
+
+    await ingestCsv("/tmp/persist-fail.csv", "hash-pf", (e) => events.push(e), deps);
+
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toEqual(["file-start", "csv-progress", "file-done"]);
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    consoleSpy.mockRestore();
   });
 
   it("emits file-error with row context and does not upsert when parse produces no rows", async () => {
@@ -340,5 +450,70 @@ describe("ingestCsv", () => {
 
     expect(events.map((e) => e.kind)).toEqual(["file-error"]);
     expect(embed).not.toHaveBeenCalled();
+  });
+});
+
+describe("rehydrateCsvRowsFromDisk", () => {
+  it("returns true and populates the in-memory cache when on-disk rows exist", async () => {
+    const parsed: ParseResult = {
+      rows: [
+        {
+          rowId: 1,
+          projectId: "P1",
+          itemNo: "10100",
+          itemDesc: "desc",
+          unit: "LS",
+          qty: 1,
+          bidder: "ACME",
+          unitPrice: 10,
+          extAmt: 10,
+          raw: {},
+        },
+      ],
+      columnMap: emptyColumnMap(),
+      unmapped: [],
+      errors: [],
+    };
+    const loadCsvRows = vi.fn<LoadCsvRowsFn>(async () => parsed);
+
+    const ok = await rehydrateCsvRowsFromDisk("hash-rh", { loadCsvRows });
+    expect(ok).toBe(true);
+    expect(getCsvRows("hash-rh")?.rows).toHaveLength(1);
+  });
+
+  it("returns false and does not populate the cache when the on-disk file is missing", async () => {
+    const loadCsvRows = vi.fn<LoadCsvRowsFn>(async () => null);
+    const ok = await rehydrateCsvRowsFromDisk("hash-missing", { loadCsvRows });
+    expect(ok).toBe(false);
+    expect(getCsvRows("hash-missing")).toBeUndefined();
+  });
+
+  it("is a no-op when the in-memory cache already has the rows", async () => {
+    const parsed: ParseResult = {
+      rows: [
+        {
+          rowId: 1,
+          projectId: "P1",
+          itemNo: "10100",
+          itemDesc: "x",
+          unit: "LS",
+          qty: 1,
+          bidder: "ACME",
+          unitPrice: 10,
+          extAmt: 10,
+          raw: {},
+        },
+      ],
+      columnMap: emptyColumnMap(),
+      unmapped: [],
+      errors: [],
+    };
+    const loadCsvRows = vi.fn<LoadCsvRowsFn>(async () => parsed);
+    await rehydrateCsvRowsFromDisk("hash-seed", { loadCsvRows });
+    loadCsvRows.mockClear();
+
+    const ok = await rehydrateCsvRowsFromDisk("hash-seed", { loadCsvRows });
+    expect(ok).toBe(true);
+    expect(loadCsvRows).not.toHaveBeenCalled();
   });
 });

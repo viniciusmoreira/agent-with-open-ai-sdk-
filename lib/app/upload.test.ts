@@ -57,12 +57,16 @@ function makeDeps(
   writes: Array<{ filePath: string; bytes: Uint8Array }>;
   mkdirs: string[];
   runs: DispatchedRun[];
+  rehydrate: ReturnType<typeof vi.fn>;
 } {
   const csv = vi.fn<UploadIngestFn>(async () => {});
   const pdf = vi.fn<UploadIngestFn>(async () => {});
   const writes: Array<{ filePath: string; bytes: Uint8Array }> = [];
   const mkdirs: string[] = [];
   const runs: DispatchedRun[] = [];
+  const rehydrate = vi.fn<(fileHash: string) => Promise<boolean>>(
+    async () => true,
+  );
   const deps: UploadDeps = {
     store: makeStore().store,
     ingestCsv: csv,
@@ -78,9 +82,10 @@ function makeDeps(
     dispatch: (run) => {
       runs.push(run);
     },
+    rehydrateCsvRows: rehydrate,
     ...overrides,
   };
-  return { deps, csv, pdf, writes, mkdirs, runs };
+  return { deps, csv, pdf, writes, mkdirs, runs, rehydrate };
 }
 
 function uploadRequest(
@@ -189,7 +194,7 @@ describe("handleUpload", () => {
 
   it("returns 200 with cached:true and skips dispatch when the hash is already in the store", async () => {
     const storeState = makeStore(true);
-    const { deps, csv, pdf, runs, writes } = makeDeps({
+    const { deps, csv, pdf, runs, writes, rehydrate } = makeDeps({
       store: storeState.store,
     });
     const blob = new Blob([CSV_TEXT], { type: "text/csv" });
@@ -201,6 +206,42 @@ describe("handleUpload", () => {
     expect(writes).toHaveLength(0);
     expect(csv).not.toHaveBeenCalled();
     expect(pdf).not.toHaveBeenCalled();
+    expect(rehydrate).toHaveBeenCalledWith(body.fileHash);
+  });
+
+  it("returns cached:true for a known PDF hash without invoking the CSV row-cache rehydration", async () => {
+    const storeState = makeStore(true);
+    const { deps, csv, pdf, rehydrate, runs } = makeDeps({
+      store: storeState.store,
+    });
+    const blob = new Blob([PDF_BYTES], { type: "application/pdf" });
+    const res = await handleUpload(uploadRequest(blob, "plans.pdf"), deps);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { cached: boolean };
+    expect(body.cached).toBe(true);
+    expect(rehydrate).not.toHaveBeenCalled();
+    expect(runs).toHaveLength(0);
+    expect(csv).not.toHaveBeenCalled();
+    expect(pdf).not.toHaveBeenCalled();
+  });
+
+  it("falls through to full CSV ingestion when the row cache rehydration reports a miss", async () => {
+    const storeState = makeStore(true);
+    const { deps, csv, runs, writes, rehydrate } = makeDeps({
+      store: storeState.store,
+      rehydrateCsvRows: async () => false,
+    });
+    const blob = new Blob([CSV_TEXT], { type: "text/csv" });
+    const res = await handleUpload(uploadRequest(blob, "bids.csv"), deps);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { fileHash: string; cached: boolean };
+    expect(body.cached).toBe(false);
+    expect(rehydrate).not.toHaveBeenCalled(); // overridden by the inline stub
+    expect(runs).toHaveLength(1);
+    expect(writes).toHaveLength(1);
+    await runs[0]!();
+    expect(csv).toHaveBeenCalledTimes(1);
+    expect(csv).toHaveBeenCalledWith(writes[0]!.filePath, body.fileHash);
   });
 
   it("returns the same fileHash for two identical-content uploads", async () => {

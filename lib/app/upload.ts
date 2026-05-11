@@ -4,6 +4,8 @@ import path from "node:path";
 
 import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 
+import { rehydrateCsvRowsFromDisk } from "./ingest-csv";
+
 export type UploadFileKind = "csv" | "pdf";
 
 export type UploadIngestFn = (
@@ -21,6 +23,12 @@ export type UploadDeps = {
   writeFile?: (filePath: string, data: Uint8Array) => Promise<void>;
   /** Called instead of `setImmediate`. Test seam so tests can await dispatch. */
   dispatch?: (run: () => Promise<void>) => void;
+  /**
+   * Reloads the in-memory CSV row cache from disk for a given fileHash.
+   * Returns true on success, false when the on-disk cache is missing so the
+   * caller can fall through to a full ingestion. Test seam.
+   */
+  rehydrateCsvRows?: (fileHash: string) => Promise<boolean>;
 };
 
 const PDF_MAGIC = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]); // "%PDF-"
@@ -76,7 +84,17 @@ export async function handleUpload(
 
   const fileHash = sha256Hex(buffer);
   if (deps.store.has(fileHash)) {
-    return jsonOk({ fileHash, cached: true });
+    if (kind === "csv") {
+      const rehydrate = deps.rehydrateCsvRows ?? rehydrateCsvRowsFromDisk;
+      const ok = await rehydrate(fileHash);
+      if (ok) {
+        return jsonOk({ fileHash, cached: true });
+      }
+      // Embeddings exist on disk but the row cache does not — fall through to
+      // the full ingestion path so query_bids / find_outliers can answer.
+    } else {
+      return jsonOk({ fileHash, cached: true });
+    }
   }
 
   const baseName = sanitizeFilename(file.name ?? `${kind}-upload`);
