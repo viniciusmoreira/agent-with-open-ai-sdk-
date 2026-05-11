@@ -13,6 +13,7 @@ import {
   createVisionOcr,
   OcrAdapterError,
   rasterizePdfPage,
+  rasterizePdfPages,
   VISION_PROMPT,
   type CachedOcrPayload,
   type PdfToPngFn,
@@ -226,6 +227,53 @@ describe("rasterizePdfPage", () => {
       }),
     ).rejects.toMatchObject({
       domainError: { kind: "pdf", file: "plans.pdf", page: 2 },
+    });
+  });
+});
+
+describe("rasterizePdfPages", () => {
+  it("issues a single pdfToPng call and returns a page→PNG map", async () => {
+    const pngA = new Uint8Array([137, 80, 78, 71, 1]);
+    const pngB = new Uint8Array([137, 80, 78, 71, 2]);
+    const fakePdfToPng = vi.fn().mockResolvedValue([
+      { pageNumber: 2, name: "p_2.png", content: Buffer.from(pngA), path: "", width: 1, height: 1 },
+      { pageNumber: 5, name: "p_5.png", content: Buffer.from(pngB), path: "", width: 1, height: 1 },
+    ]);
+
+    const out = await rasterizePdfPages(new Uint8Array([0, 0, 0]), [2, 5], {
+      pdfToPng: fakePdfToPng as unknown as PdfToPngFn,
+    });
+
+    expect(fakePdfToPng).toHaveBeenCalledTimes(1);
+    const props = fakePdfToPng.mock.calls[0]![1];
+    expect(props.pagesToProcess).toEqual([2, 5]);
+    expect(props.strictPagesToProcess).toBe(true);
+    expect(out.size).toBe(2);
+    expect(Array.from(out.get(2) ?? [])).toEqual(Array.from(pngA));
+    expect(Array.from(out.get(5) ?? [])).toEqual(Array.from(pngB));
+  });
+
+  it("returns an empty map without invoking pdfToPng when no pages are requested", async () => {
+    const fakePdfToPng = vi.fn();
+    const out = await rasterizePdfPages(new Uint8Array([0]), [], {
+      pdfToPng: fakePdfToPng as unknown as PdfToPngFn,
+    });
+    expect(out.size).toBe(0);
+    expect(fakePdfToPng).not.toHaveBeenCalled();
+  });
+
+  it("wraps rasterizer failures into DomainError(kind: 'pdf') with file label", async () => {
+    const fakePdfToPng = vi.fn().mockRejectedValue(new Error("boom"));
+    await expect(
+      rasterizePdfPages(new Uint8Array([0]), [1, 3], {
+        file: "plans.pdf",
+        pdfToPng: fakePdfToPng as unknown as PdfToPngFn,
+      }),
+    ).rejects.toMatchObject({
+      domainError: {
+        kind: "pdf",
+        file: "plans.pdf",
+      },
     });
   });
 });

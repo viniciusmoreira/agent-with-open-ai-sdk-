@@ -1,7 +1,7 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import path from "node:path";
 
-import { OcrAdapterError, rasterizePdfPage } from "@/lib/adapters/pdf/vision-ocr";
+import { OcrAdapterError, rasterizePdfPages } from "@/lib/adapters/pdf/vision-ocr";
 import type { EmbeddingsPort } from "@/lib/domain/ports/embeddings-port";
 import type { OcrPort } from "@/lib/domain/ports/ocr-port";
 import type { PdfTextPort } from "@/lib/domain/ports/pdf-text-port";
@@ -13,9 +13,9 @@ export type IngestPdfEmit = (event: IngestEvent) => void;
 
 export type RasterizeFn = (
   pdf: Uint8Array,
-  page: number,
+  pages: number[],
   opts: { file: string },
-) => Promise<Uint8Array>;
+) => Promise<Map<number, Uint8Array>>;
 
 export type IngestPdfDeps = {
   pdfText: PdfTextPort;
@@ -96,6 +96,19 @@ export async function ingestPdf(
     return;
   }
 
+  const ocrPages = textResult.pages.filter((p) => !p.usable).map((p) => p.page);
+  let pngByPage: Map<number, Uint8Array> = new Map();
+  let rasterizeCause: unknown;
+  let rasterizeFailed = false;
+  if (ocrPages.length > 0) {
+    try {
+      pngByPage = await rasterize(pdfBytes, ocrPages, { file });
+    } catch (cause) {
+      rasterizeFailed = true;
+      rasterizeCause = cause;
+    }
+  }
+
   const collected: Chunk[] = [];
   for (const page of textResult.pages) {
     if (page.usable) {
@@ -110,8 +123,35 @@ export async function ingestPdf(
       continue;
     }
 
+    if (rasterizeFailed) {
+      const domainErr = toDomainError(rasterizeCause, page.page);
+      emit({
+        kind: "file-error",
+        file,
+        message: domainErr.message,
+        detail: domainErr,
+      });
+      continue;
+    }
+
+    const png = pngByPage.get(page.page);
+    if (!png) {
+      const domainErr: DomainError = {
+        kind: "pdf",
+        message: `rasterizer returned no output for page ${page.page}`,
+        page: page.page,
+        file,
+      };
+      emit({
+        kind: "file-error",
+        file,
+        message: domainErr.message,
+        detail: domainErr,
+      });
+      continue;
+    }
+
     try {
-      const png = await rasterize(pdfBytes, page.page, { file });
       const ocrResult = await deps.ocr.extractPageText({
         pageImage: png,
         page: page.page,
@@ -226,10 +266,10 @@ async function defaultStat(filePath: string): Promise<{ size: number }> {
 
 function defaultRasterize(
   pdf: Uint8Array,
-  page: number,
+  pages: number[],
   opts: { file: string },
-): Promise<Uint8Array> {
-  return rasterizePdfPage(pdf, page, { file: opts.file });
+): Promise<Map<number, Uint8Array>> {
+  return rasterizePdfPages(pdf, pages, { file: opts.file });
 }
 
 function defaultChunk(text: string): string[] {

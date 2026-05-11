@@ -86,7 +86,11 @@ function baseDeps(overrides: Partial<IngestPdfDeps> & {
   return {
     readFile: async () => PDF_BYTES,
     statFile: async () => ({ size: PDF_BYTES.byteLength }),
-    rasterize: async (_pdf, p) => new Uint8Array([0xff, p & 0xff]),
+    rasterize: async (_pdf, pages) => {
+      const out = new Map<number, Uint8Array>();
+      for (const p of pages) out.set(p, new Uint8Array([0xff, p & 0xff]));
+      return out;
+    },
     chunk: (text) => (text.trim().length > 0 ? [text.trim()] : []),
     ...overrides,
   };
@@ -141,7 +145,11 @@ describe("ingestPdf", () => {
     const ocr = makeOcr();
     const { port: embeddings, embed } = makeEmbeddings();
     const store = makeStore();
-    const rasterize = vi.fn(async (_pdf: Uint8Array, p: number) => new Uint8Array([p]));
+    const rasterize = vi.fn(async (_pdf: Uint8Array, pages: number[]) => {
+      const out = new Map<number, Uint8Array>();
+      for (const p of pages) out.set(p, new Uint8Array([p]));
+      return out;
+    });
 
     await ingestPdf(
       "/tmp/plans.pdf",
@@ -162,8 +170,8 @@ describe("ingestPdf", () => {
       "vision",
     ]);
     expect(ocr.call).toHaveBeenCalledTimes(2);
-    expect(rasterize).toHaveBeenCalledTimes(2);
-    expect(rasterize.mock.calls.map((c) => c[1])).toEqual([1, 2]);
+    expect(rasterize).toHaveBeenCalledTimes(1);
+    expect(rasterize.mock.calls[0]![1]).toEqual([1, 2]);
     expect(embed).toHaveBeenCalledTimes(1);
     expect(store.upserts[0]!.chunks).toHaveLength(2);
   });

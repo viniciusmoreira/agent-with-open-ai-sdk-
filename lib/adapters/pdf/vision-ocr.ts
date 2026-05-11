@@ -121,6 +121,36 @@ export async function rasterizePdfPage(
   }
 }
 
+export async function rasterizePdfPages(
+  pdf: Uint8Array,
+  pages: number[],
+  options: RasterizeOptions = {},
+): Promise<Map<number, Uint8Array>> {
+  const result = new Map<number, Uint8Array>();
+  if (pages.length === 0) return result;
+  const rasterize = options.pdfToPng ?? pdfToPng;
+  try {
+    const out = await rasterize(cloneBytes(pdf).buffer as ArrayBuffer, {
+      pagesToProcess: pages,
+      viewportScale: options.viewportScale ?? DEFAULT_VIEWPORT_SCALE,
+      strictPagesToProcess: true,
+      verbosityLevel: 0,
+    });
+    for (const item of out) {
+      result.set(item.pageNumber, new Uint8Array(item.content));
+    }
+    return result;
+  } catch (cause) {
+    if (cause instanceof OcrAdapterError) throw cause;
+    throw new OcrAdapterError({
+      kind: "pdf",
+      message: `failed to rasterize pages [${pages.join(", ")}]: ${describe(cause)}`,
+      cause,
+      ...(options.file !== undefined ? { file: options.file } : {}),
+    });
+  }
+}
+
 type CallVisionParams = {
   client: ReturnType<typeof getOpenAIClient>;
   model: string;

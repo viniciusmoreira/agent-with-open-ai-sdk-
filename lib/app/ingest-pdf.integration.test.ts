@@ -84,7 +84,11 @@ describe("ingestPdf integration (mocked mixed-path)", () => {
           store,
           readFile: async () => new Uint8Array([0x25, 0x50, 0x44, 0x46]),
           statFile: async () => ({ size: 4 }),
-          rasterize: async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+          rasterize: async (_pdf, pages) => {
+            const out = new Map<number, Uint8Array>();
+            for (const p of pages) out.set(p, new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+            return out;
+          },
         },
       );
 
@@ -126,7 +130,7 @@ describe("ingestPdf integration (mocked mixed-path)", () => {
           store,
           readFile: async () => new Uint8Array(),
           statFile: async () => ({ size: 4 }),
-          rasterize: async () => new Uint8Array(),
+          rasterize: async () => new Map<number, Uint8Array>(),
         },
       );
 
