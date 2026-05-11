@@ -16,6 +16,7 @@
   },
   "packageManager": "pnpm@10.20.0",
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.63",
     "@base-ui/react": "^1.4.1",
     "ai": "^6.0.177",
     "class-variance-authority": "^0.7.1",

@@ -1,4 +1,3 @@
-import { tool } from "ai";
 import { z } from "zod";
 
 import { getAllCsvRows } from "@/lib/app/csv-row-cache";
@@ -62,12 +61,18 @@ export type QueryBidsDeps = {
   listRows?: () => readonly BidRow[];
 };
 
-export function createQueryBidsTool(deps: QueryBidsDeps = {}) {
+export type QueryBidsTool = {
+  description: string;
+  inputSchema: typeof queryBidsInputSchema;
+  execute: (input: QueryBidsInput, options?: unknown) => Promise<QueryBidsResult>;
+};
+
+export function createQueryBidsTool(deps: QueryBidsDeps = {}): QueryBidsTool {
   const listRows = deps.listRows ?? getAllCsvRows;
-  return tool({
+  return {
     description: DESCRIPTION,
     inputSchema: queryBidsInputSchema,
-    execute: async (input): Promise<QueryBidsResult> => {
+    execute: async (input) => {
       const rows = listRows();
       if (rows.length === 0) {
         return {
@@ -77,7 +82,7 @@ export function createQueryBidsTool(deps: QueryBidsDeps = {}) {
       }
       return runQuery(input, rows);
     },
-  });
+  };
 }
 
 export function runQuery(

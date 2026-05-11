@@ -1,4 +1,3 @@
-import { tool } from "ai";
 import { z } from "zod";
 
 import { getAllCsvRows } from "@/lib/app/csv-row-cache";
@@ -26,17 +25,25 @@ export type FindOutliersDeps = {
   listRows?: () => readonly BidRow[];
 };
 
-export function createFindOutliersTool(deps: FindOutliersDeps = {}) {
+export type FindOutliersTool = {
+  description: string;
+  inputSchema: typeof findOutliersInputSchema;
+  execute: (input: FindOutliersInput, options?: unknown) => Promise<OutlierResult>;
+};
+
+export function createFindOutliersTool(
+  deps: FindOutliersDeps = {},
+): FindOutliersTool {
   const listRows = deps.listRows ?? getAllCsvRows;
-  return tool({
+  return {
     description: DESCRIPTION,
     inputSchema: findOutliersInputSchema,
-    execute: async (input): Promise<OutlierResult> => {
+    execute: async (input) => {
       const rows = listRows();
       const options: { threshold?: number; minPeers?: number } = {};
       if (input.threshold !== undefined) options.threshold = input.threshold;
       if (input.minPeers !== undefined) options.minPeers = input.minPeers;
       return flagOutliers(rows, options);
     },
-  });
+  };
 }

@@ -1,4 +1,3 @@
-import { tool } from "ai";
 import { z } from "zod";
 
 import type { EmbeddingsPort } from "@/lib/domain/ports/embeddings-port";
@@ -44,11 +43,22 @@ export type SearchDocumentsDeps = {
   store: VectorStorePort;
 };
 
-export function createSearchDocumentsTool(deps: SearchDocumentsDeps) {
-  return tool({
+export type SearchDocumentsTool = {
+  description: string;
+  inputSchema: typeof searchDocumentsInputSchema;
+  execute: (
+    input: SearchDocumentsInput,
+    options?: unknown,
+  ) => Promise<SearchDocumentsResult>;
+};
+
+export function createSearchDocumentsTool(
+  deps: SearchDocumentsDeps,
+): SearchDocumentsTool {
+  return {
     description: DESCRIPTION,
     inputSchema: searchDocumentsInputSchema,
-    execute: async (input): Promise<SearchDocumentsResult> => {
+    execute: async (input) => {
       const k = input.k ?? DEFAULT_K;
       const vectors = await deps.embeddings.embedTexts([input.query]);
       const queryVector = vectors[0];
@@ -67,7 +77,7 @@ export function createSearchDocumentsTool(deps: SearchDocumentsDeps) {
       }));
       return { chunks };
     },
-  });
+  };
 }
 
 function cosineScore(
