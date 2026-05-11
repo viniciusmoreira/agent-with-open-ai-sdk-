@@ -30,7 +30,22 @@ export function createOpenAIEmbeddings(
           () => client.embeddings.create({ model, input: batch }),
           sleep,
         );
-        for (const item of res.data) out.push(item.embedding);
+        const slot = new Array<number[]>(batch.length);
+        for (const item of res.data) {
+          if (
+            typeof item.index !== "number" ||
+            item.index < 0 ||
+            item.index >= batch.length
+          ) {
+            throw new Error(`embedding index out of range: ${item.index}`);
+          }
+          slot[item.index] = item.embedding;
+        }
+        for (let j = 0; j < batch.length; j++) {
+          const v = slot[j];
+          if (!v) throw new Error(`missing embedding for batch index ${j}`);
+          out.push(v);
+        }
       }
       return out;
     },

@@ -22,8 +22,10 @@ function deterministicVector(text: string): number[] {
   return [h / 0xffff, text.length, 0];
 }
 
-function happyResponse(args: CreateArgs): { data: { embedding: number[] }[] } {
-  return { data: args.input.map((t) => ({ embedding: deterministicVector(t) })) };
+function happyResponse(
+  args: CreateArgs,
+): { data: { embedding: number[]; index: number }[] } {
+  return { data: args.input.map((t, i) => ({ embedding: deterministicVector(t), index: i })) };
 }
 
 function apiError(status: number): APIError {
@@ -127,5 +129,42 @@ describe("createOpenAIEmbeddings.embedTexts", () => {
       deterministicVector("beta"),
       deterministicVector("gamma"),
     ]);
+  });
+
+  it("places embeddings by item.index, not arrival order", async () => {
+    createSpy.mockImplementationOnce(async (args: CreateArgs) => ({
+      data: [
+        { embedding: deterministicVector(args.input[2]!), index: 2 },
+        { embedding: deterministicVector(args.input[0]!), index: 0 },
+        { embedding: deterministicVector(args.input[1]!), index: 1 },
+      ],
+    }));
+    const adapter = createOpenAIEmbeddings({ model: "m" });
+    const out = await adapter.embedTexts(["alpha", "beta", "gamma"]);
+    expect(out).toEqual([
+      deterministicVector("alpha"),
+      deterministicVector("beta"),
+      deterministicVector("gamma"),
+    ]);
+  });
+
+  it("throws when an item index is out of range", async () => {
+    createSpy.mockImplementationOnce(async () => ({
+      data: [{ embedding: [1, 2, 3], index: 5 }],
+    }));
+    const adapter = createOpenAIEmbeddings({ model: "m" });
+    await expect(adapter.embedTexts(["only-one"])).rejects.toThrow(
+      "embedding index out of range",
+    );
+  });
+
+  it("throws when an embedding is missing from the response", async () => {
+    createSpy.mockImplementationOnce(async () => ({
+      data: [{ embedding: [1, 2, 3], index: 0 }],
+    }));
+    const adapter = createOpenAIEmbeddings({ model: "m" });
+    await expect(adapter.embedTexts(["a", "b"])).rejects.toThrow(
+      "missing embedding for batch index 1",
+    );
   });
 });
