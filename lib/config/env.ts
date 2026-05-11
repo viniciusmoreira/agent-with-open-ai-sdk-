@@ -11,6 +11,11 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(50 * 1024 * 1024),
+  UPLOAD_INGEST_CONCURRENCY: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(2),
 });
 
 export type Env = z.infer<typeof envSchema>;

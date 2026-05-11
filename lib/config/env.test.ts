@@ -16,6 +16,7 @@ describe("loadEnv", () => {
       REASONING_MODEL: "gpt-4.1",
       VISION_OCR_MODEL: "gpt-4o",
       MAX_UPLOAD_BYTES: 1048576,
+      UPLOAD_INGEST_CONCURRENCY: 2,
     });
   });
 
@@ -25,6 +26,7 @@ describe("loadEnv", () => {
     expect(result.REASONING_MODEL).toBe("gpt-4o");
     expect(result.VISION_OCR_MODEL).toBe("gpt-4o-mini");
     expect(result.MAX_UPLOAD_BYTES).toBe(50 * 1024 * 1024);
+    expect(result.UPLOAD_INGEST_CONCURRENCY).toBe(2);
   });
 
   it("throws a descriptive error when OPENAI_API_KEY is missing", () => {

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "node:fs/promises";
 import path from "node:path";
 
+import { getEnv } from "@/lib/config/env";
 import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 
 import { rehydrateCsvRowsFromDisk } from "./ingest-csv";
@@ -21,7 +22,10 @@ export type UploadDeps = {
   tmpDir?: string;
   mkdir?: (dir: string, opts: { recursive: boolean }) => Promise<unknown>;
   writeFile?: (filePath: string, data: Uint8Array) => Promise<void>;
-  /** Called instead of `setImmediate`. Test seam so tests can await dispatch. */
+  /**
+   * Called instead of the module-level bounded dispatcher. Test seam so tests
+   * can await dispatch or assert queueing without spinning up real timers.
+   */
   dispatch?: (run: () => Promise<void>) => void;
   /**
    * Reloads the in-memory CSV row cache from disk for a given fileHash.
@@ -196,10 +200,57 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Creates a dispatcher that runs at most `limit` jobs concurrently. Excess
+ * jobs queue in FIFO order; each completion drains the next slot.
+ *
+ * The ingestion pipeline (Vision OCR + embeddings) is memory- and quota-heavy
+ * and assumes a single-user workload. Bounding concurrency keeps the in-memory
+ * vector store and OpenAI rate budget within the envelope ADR-004/005 trade for.
+ */
+export function createBoundedDispatch(
+  limit: number,
+): (run: () => Promise<void>) => void {
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new Error(
+      `createBoundedDispatch requires a positive integer limit, got ${limit}`,
+    );
+  }
+  let active = 0;
+  const queue: Array<() => Promise<void>> = [];
+  const drain = (): void => {
+    while (active < limit && queue.length > 0) {
+      const next = queue.shift()!;
+      active++;
+      setImmediate(() => {
+        next()
+          .catch(() => {
+            // run() already wraps the ingestion to log + swallow errors; this
+            // catch is defensive against future callers that pass a rejecting
+            // task so we never leak an unhandled rejection from the queue.
+          })
+          .finally(() => {
+            active--;
+            drain();
+          });
+      });
+    }
+  };
+  return (run) => {
+    queue.push(run);
+    drain();
+  };
+}
+
+let cachedDefaultDispatch: ((run: () => Promise<void>) => void) | undefined;
+
 function defaultDispatch(run: () => Promise<void>): void {
-  setImmediate(() => {
-    void run();
-  });
+  if (!cachedDefaultDispatch) {
+    cachedDefaultDispatch = createBoundedDispatch(
+      getEnv().UPLOAD_INGEST_CONCURRENCY,
+    );
+  }
+  cachedDefaultDispatch(run);
 }
 
 function defaultMkdir(

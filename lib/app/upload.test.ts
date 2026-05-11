@@ -5,6 +5,7 @@ import type { Chunk } from "@/lib/domain/types";
 import type { VectorStorePort } from "@/lib/domain/ports/vector-store-port";
 
 import {
+  createBoundedDispatch,
   detectFileKind,
   handleUpload,
   type UploadDeps,
@@ -309,5 +310,84 @@ describe("handleUpload", () => {
     await runs[0]!();
     expect(consoleSpy).toHaveBeenCalledTimes(1);
     consoleSpy.mockRestore();
+  });
+});
+
+describe("createBoundedDispatch", () => {
+  type Deferred = {
+    promise: Promise<void>;
+    resolve: () => void;
+  };
+  function defer(): Deferred {
+    let resolve!: () => void;
+    const promise = new Promise<void>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  it("rejects non-positive limits", () => {
+    expect(() => createBoundedDispatch(0)).toThrow();
+    expect(() => createBoundedDispatch(-1)).toThrow();
+    expect(() => createBoundedDispatch(1.5)).toThrow();
+  });
+
+  it("runs at most `limit` jobs concurrently and queues the rest", async () => {
+    const dispatch = createBoundedDispatch(2);
+    const gates = [defer(), defer(), defer(), defer()];
+    let active = 0;
+    let peak = 0;
+    const completions: number[] = [];
+
+    const tasks = gates.map((gate, i) => async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await gate.promise;
+      active--;
+      completions.push(i);
+    });
+
+    for (const task of tasks) dispatch(task);
+
+    // Let setImmediate flush so the first two slots pick up tasks.
+    await new Promise<void>((r) => setImmediate(r));
+    expect(active).toBe(2);
+    expect(peak).toBe(2);
+
+    // Release task 0 — slot should pick up task 2.
+    gates[0]!.resolve();
+    await new Promise<void>((r) => setImmediate(r));
+    await new Promise<void>((r) => setImmediate(r));
+    expect(completions).toEqual([0]);
+    expect(active).toBe(2);
+    expect(peak).toBe(2);
+
+    // Drain the rest.
+    gates[1]!.resolve();
+    gates[2]!.resolve();
+    gates[3]!.resolve();
+    // Yield enough turns for the queue to fully drain.
+    for (let i = 0; i < 6; i++) {
+      await new Promise<void>((r) => setImmediate(r));
+    }
+    expect(completions).toEqual([0, 1, 2, 3]);
+    expect(active).toBe(0);
+    expect(peak).toBe(2);
+  });
+
+  it("releases the slot even when a task rejects", async () => {
+    const dispatch = createBoundedDispatch(1);
+    const ran: string[] = [];
+    dispatch(async () => {
+      ran.push("first");
+      throw new Error("boom");
+    });
+    dispatch(async () => {
+      ran.push("second");
+    });
+    for (let i = 0; i < 4; i++) {
+      await new Promise<void>((r) => setImmediate(r));
+    }
+    expect(ran).toEqual(["first", "second"]);
   });
 });
