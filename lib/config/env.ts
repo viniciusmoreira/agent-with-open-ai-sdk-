@@ -6,6 +6,11 @@ const envSchema = z.object({
   EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
   REASONING_MODEL: z.string().min(1).default("gpt-4o"),
   VISION_OCR_MODEL: z.string().min(1).default("gpt-4o-mini"),
+  MAX_UPLOAD_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(50 * 1024 * 1024),
 });
 
 export type Env = z.infer<typeof envSchema>;

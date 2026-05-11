@@ -8,12 +8,14 @@ describe("loadEnv", () => {
       EMBEDDING_MODEL: "text-embedding-3-large",
       REASONING_MODEL: "gpt-4.1",
       VISION_OCR_MODEL: "gpt-4o",
+      MAX_UPLOAD_BYTES: "1048576",
     });
     expect(result).toEqual({
       OPENAI_API_KEY: "sk-test-key",
       EMBEDDING_MODEL: "text-embedding-3-large",
       REASONING_MODEL: "gpt-4.1",
       VISION_OCR_MODEL: "gpt-4o",
+      MAX_UPLOAD_BYTES: 1048576,
     });
   });
 
@@ -22,6 +24,7 @@ describe("loadEnv", () => {
     expect(result.EMBEDDING_MODEL).toBe("text-embedding-3-small");
     expect(result.REASONING_MODEL).toBe("gpt-4o");
     expect(result.VISION_OCR_MODEL).toBe("gpt-4o-mini");
+    expect(result.MAX_UPLOAD_BYTES).toBe(50 * 1024 * 1024);
   });
 
   it("throws a descriptive error when OPENAI_API_KEY is missing", () => {
