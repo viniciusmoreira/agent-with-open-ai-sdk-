@@ -45,6 +45,7 @@ export type ParseResult = {
   rows: BidRow[];
   columnMap: ColumnMap;
   unmapped: string[];
+  errors: DomainError[];
 };
 
 export type IngestEvent =
