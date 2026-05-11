@@ -18,7 +18,7 @@ const uiMessagePartSchema = z
 const uiMessageSchema = z
   .object({
     id: z.string().optional(),
-    role: z.enum(["system", "user", "assistant"]),
+    role: z.enum(["user", "assistant"]),
     parts: z.array(uiMessagePartSchema).min(1).max(MAX_PARTS_PER_MESSAGE),
   })
   .passthrough();
