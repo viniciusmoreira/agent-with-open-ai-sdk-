@@ -17,6 +17,7 @@ describe("loadEnv", () => {
       VISION_OCR_MODEL: "gpt-4o",
       MAX_UPLOAD_BYTES: 1048576,
       UPLOAD_INGEST_CONCURRENCY: 2,
+      OPENAI_REQUEST_TIMEOUT_MS: 60_000,
     });
   });
 
@@ -27,6 +28,7 @@ describe("loadEnv", () => {
     expect(result.VISION_OCR_MODEL).toBe("gpt-4o-mini");
     expect(result.MAX_UPLOAD_BYTES).toBe(50 * 1024 * 1024);
     expect(result.UPLOAD_INGEST_CONCURRENCY).toBe(2);
+    expect(result.OPENAI_REQUEST_TIMEOUT_MS).toBe(60_000);
   });
 
   it("throws a descriptive error when OPENAI_API_KEY is missing", () => {

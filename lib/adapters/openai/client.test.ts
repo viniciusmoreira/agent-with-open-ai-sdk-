@@ -28,4 +28,14 @@ describe("getOpenAIClient", () => {
     expect(endpoint).toBeDefined();
     expect(typeof endpoint["create"]).toBe("function");
   });
+
+  it("applies a request timeout so hung connections are bounded", () => {
+    const client = getOpenAIClient();
+    expect(client["timeout"]).toBeGreaterThan(0);
+  });
+
+  it("disables SDK-internal retries (retry is owned by withRetry)", () => {
+    const client = getOpenAIClient();
+    expect(client["maxRetries"]).toBe(0);
+  });
 });

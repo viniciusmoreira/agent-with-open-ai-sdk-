@@ -16,6 +16,11 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(2),
+  OPENAI_REQUEST_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60_000),
 });
 
 export type Env = z.infer<typeof envSchema>;
