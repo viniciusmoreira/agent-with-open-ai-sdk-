@@ -7,7 +7,7 @@ import type { BidRow, OutlierResult } from "@/lib/domain/types";
 export const findOutliersInputSchema = z
   .object({
     threshold: z.number().positive().max(10).optional(),
-    minPeers: z.number().int().positive().max(1000).optional(),
+    minPeers: z.number().int().min(2).max(1000).optional(),
   })
   .strict();
 

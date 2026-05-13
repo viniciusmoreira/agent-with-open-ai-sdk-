@@ -70,10 +70,15 @@ describe("find_outliers tool — input schema (strict)", () => {
     expect(findOutliersInputSchema.safeParse({ threshold: 0.2, foo: 1 }).success).toBe(false);
   });
 
-  it("rejects non-positive threshold and minPeers", () => {
+  it("rejects non-positive threshold and minPeers below 2", () => {
     expect(findOutliersInputSchema.safeParse({ threshold: 0 }).success).toBe(false);
     expect(findOutliersInputSchema.safeParse({ minPeers: 0 }).success).toBe(false);
+    expect(findOutliersInputSchema.safeParse({ minPeers: 1 }).success).toBe(false);
     expect(findOutliersInputSchema.safeParse({ minPeers: 2.5 }).success).toBe(false);
+  });
+
+  it("accepts minPeers: 2 (minimum valid value matching algorithmic precondition)", () => {
+    expect(findOutliersInputSchema.safeParse({ minPeers: 2 }).success).toBe(true);
   });
 
   it("accepts an empty object (all options default)", () => {
