@@ -843,4 +843,50 @@ describe("hydrateCsvRowCacheFromDisk", () => {
     // here we just verify the happy-path result is correct and no errors were logged.
     expect(errorSpy).not.toHaveBeenCalled();
   });
+
+  it("clearCsvRowCache resets hydration flags so the next call re-reads disk", async () => {
+    await seedCsvRows("resetKey", {
+      rows: [sampleRow(10)],
+      columnMap: sampleColumnMap,
+      unmapped: [],
+    });
+
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+    expect(getCsvRows("resetKey")?.rows).toHaveLength(1);
+
+    clearCsvRowCache();
+    expect(getCsvRows("resetKey")).toBeUndefined();
+
+    // Without the fix, this call would be a no-op (hydrated flag still true).
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+    expect(getCsvRows("resetKey")?.rows).toHaveLength(1);
+  });
+
+  it("treats different cacheBaseDir values as independent memoization keys", async () => {
+    const workDirB = await mkdtemp(path.join(tmpdir(), "hydrate-csvrows-b-"));
+    try {
+      await seedCsvRows("keyA", {
+        rows: [sampleRow(1)],
+        columnMap: sampleColumnMap,
+        unmapped: [],
+      });
+      const dirB = path.join(cacheRoot(workDirB), "csv-rows");
+      await mkdir(dirB, { recursive: true });
+      await writeFile(
+        path.join(dirB, "keyB.json"),
+        JSON.stringify({ rows: [sampleRow(2)], columnMap: sampleColumnMap, unmapped: [] }),
+        "utf8",
+      );
+
+      await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+      expect(getCsvRows("keyA")).toBeDefined();
+      expect(getCsvRows("keyB")).toBeUndefined();
+
+      // Without the fix, this second call would be silently skipped.
+      await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDirB });
+      expect(getCsvRows("keyB")).toBeDefined();
+    } finally {
+      await rm(workDirB, { recursive: true, force: true });
+    }
+  });
 });

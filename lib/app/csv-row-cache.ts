@@ -2,6 +2,13 @@ import type { BidRow, ParseResult } from "@/lib/domain/types";
 
 const cache = new Map<string, ParseResult>();
 
+// Keyed hydration state lives here so clearCsvRowCache can reset it atomically.
+// Keys are cacheBaseDir values (empty string = default process.cwd() path).
+export const csvHydrateState = {
+  done: new Set<string>(),
+  inflight: new Map<string, Promise<void>>(),
+};
+
 export function getCsvRows(fileHash: string): ParseResult | undefined {
   return cache.get(fileHash);
 }
@@ -20,4 +27,6 @@ export function getAllCsvRows(): BidRow[] {
 
 export function clearCsvRowCache(): void {
   cache.clear();
+  csvHydrateState.done.clear();
+  csvHydrateState.inflight.clear();
 }

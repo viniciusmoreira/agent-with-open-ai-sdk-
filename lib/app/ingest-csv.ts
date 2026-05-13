@@ -15,7 +15,7 @@ import type {
 } from "@/lib/domain/types";
 import { parseBids } from "@/lib/domain/csv/parse";
 
-import { getCsvRows, setCsvRows } from "./csv-row-cache";
+import { csvHydrateState, getCsvRows, setCsvRows } from "./csv-row-cache";
 
 export type IngestCsvEmit = (event: IngestEvent) => void;
 
@@ -249,33 +249,34 @@ export function csvRowsCachePath(fileHash: string, baseDir?: string): string {
   return path.join(cacheRoot(baseDir), CSV_ROWS_NAMESPACE, `${fileHash}.json`);
 }
 
-let csvRowsHydrated = false;
-let csvRowsHydrating: Promise<void> | null = null;
-
 export function hydrateCsvRowCacheFromDisk(
   opts: { cacheBaseDir?: string } = {},
 ): Promise<void> {
-  if (csvRowsHydrated) return Promise.resolve();
-  if (csvRowsHydrating) return csvRowsHydrating;
-  csvRowsHydrating = runCsvRowsHydrate(opts).finally(() => {
-    csvRowsHydrating = null;
+  const key = opts.cacheBaseDir ?? "";
+  if (csvHydrateState.done.has(key)) return Promise.resolve();
+  const inflight = csvHydrateState.inflight.get(key);
+  if (inflight) return inflight;
+  const promise = runCsvRowsHydrate(opts).finally(() => {
+    csvHydrateState.inflight.delete(key);
   });
-  return csvRowsHydrating;
+  csvHydrateState.inflight.set(key, promise);
+  return promise;
 }
 
 export function __resetCsvRowHydrateForTests(): void {
-  csvRowsHydrated = false;
-  csvRowsHydrating = null;
+  csvHydrateState.done.clear();
+  csvHydrateState.inflight.clear();
 }
 
 async function runCsvRowsHydrate(opts: { cacheBaseDir?: string }): Promise<void> {
+  const key = opts.cacheBaseDir ?? "";
   const dir = path.join(cacheRoot(opts.cacheBaseDir), CSV_ROWS_NAMESPACE);
   let entries: string[];
   try {
     entries = await readdir(dir);
   } catch (cause) {
     if (isNotFound(cause)) {
-      csvRowsHydrated = true;
+      csvHydrateState.done.add(key);
       return;
     }
     throw cause;
@@ -304,7 +305,7 @@ async function runCsvRowsHydrate(opts: { cacheBaseDir?: string }): Promise<void>
       logCsvRowsBulkHydrateSkip(filePath, "read-error", describeError(cause));
     }
   }
-  csvRowsHydrated = true;
+  csvHydrateState.done.add(key);
 }
 
 async function tryLoadCsvRows(
