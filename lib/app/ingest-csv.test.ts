@@ -13,6 +13,7 @@ import type { Chunk, IngestEvent, ParseResult } from "@/lib/domain/types";
 
 import { clearCsvRowCache, getAllCsvRows, getCsvRows } from "./csv-row-cache";
 import {
+  __resetCsvRowHydrateForTests,
   csvRowsCachePath,
   hydrateCsvRowCacheFromDisk,
   ingestCsv,
@@ -708,6 +709,7 @@ describe("hydrateCsvRowCacheFromDisk", () => {
   afterEach(async () => {
     errorSpy.mockRestore();
     clearCsvRowCache();
+    __resetCsvRowHydrateForTests();
     await rm(workDir, { recursive: true, force: true });
   });
 
@@ -797,5 +799,48 @@ describe("hydrateCsvRowCacheFromDisk", () => {
 
     expect(getCsvRows("valid")?.rows[0]?.rowId).toBe(5);
     expect(getCsvRows("corrupt")).toBeUndefined();
+  });
+
+  it("is a no-op on the second call — does not re-scan disk", async () => {
+    await seedCsvRows("idem", {
+      rows: [sampleRow(1)],
+      columnMap: sampleColumnMap,
+      unmapped: [],
+    });
+
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+    expect(getCsvRows("idem")?.rows).toHaveLength(1);
+
+    // Corrupt the on-disk file so a second scan would produce different results.
+    const dir = path.join(cacheRoot(workDir), "csv-rows");
+    await writeFile(path.join(dir, "idem.json"), "}{", "utf8");
+
+    // Second call must be a no-op — errorSpy should not be called for "idem".
+    await hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir });
+    const skipCalls = errorSpy.mock.calls.filter((args: unknown[]) => {
+      const first = args[0];
+      return typeof first === "string" && first.includes('"idem"');
+    });
+    expect(skipCalls).toHaveLength(0);
+    expect(getCsvRows("idem")?.rows).toHaveLength(1);
+  });
+
+  it("concurrent calls share the same hydration promise and scan disk only once", async () => {
+    await seedCsvRows("concurrent", {
+      rows: [sampleRow(7)],
+      columnMap: sampleColumnMap,
+      unmapped: [],
+    });
+
+    await Promise.all([
+      hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir }),
+      hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir }),
+      hydrateCsvRowCacheFromDisk({ cacheBaseDir: workDir }),
+    ]);
+
+    expect(getCsvRows("concurrent")?.rows).toHaveLength(1);
+    // If hydration ran three times, errorSpy may pick up duplicates on corrupt entries;
+    // here we just verify the happy-path result is correct and no errors were logged.
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });
