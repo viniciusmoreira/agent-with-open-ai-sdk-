@@ -126,6 +126,38 @@ describe("flagOutliers", () => {
     expect(relaxed.flagged).toHaveLength(2);
   });
 
+  it("does not collide when itemNo and unit both contain spaces (key-collision regression)", () => {
+    // "104 01" + "EA"  →  old key "104 01 EA"
+    // "104"    + "01 EA" →  old key "104 01 EA"  (same!)
+    // With the JSON.stringify fix the two groups are distinct and neither
+    // reaches minPeers=3, so no flags should be emitted.
+    const rows: BidRow[] = [
+      makeRow(1, { itemNo: "104 01", unit: "EA", unitPrice: 100 }),
+      makeRow(2, { itemNo: "104 01", unit: "EA", unitPrice: 100 }),
+      makeRow(3, { itemNo: "104", unit: "01 EA", unitPrice: 9999 }),
+      makeRow(4, { itemNo: "104", unit: "01 EA", unitPrice: 9999 }),
+    ];
+    expect(flagOutliers(rows, { minPeers: 3 }).flagged).toEqual([]);
+    // Also verify the two groups are seen as independent when there are enough
+    // peers: flags from "104 01"/"EA" should not include rows from "104"/"01 EA".
+    const rowsWithPeers: BidRow[] = [
+      makeRow(1, { itemNo: "104 01", unit: "EA", unitPrice: 100 }),
+      makeRow(2, { itemNo: "104 01", unit: "EA", unitPrice: 100 }),
+      makeRow(3, { itemNo: "104 01", unit: "EA", unitPrice: 200 }),
+      makeRow(4, { itemNo: "104", unit: "01 EA", unitPrice: 50 }),
+      makeRow(5, { itemNo: "104", unit: "01 EA", unitPrice: 50 }),
+      makeRow(6, { itemNo: "104", unit: "01 EA", unitPrice: 50 }),
+    ];
+    const result = flagOutliers(rowsWithPeers, { minPeers: 3, threshold: 0.15 });
+    const flaggedRowIds = result.flagged.map((f) => f.rowId);
+    // Row 3 should be flagged (deviation from peers 1 & 2)
+    expect(flaggedRowIds).toContain(3);
+    // Rows 4-6 are perfectly uniform; none should be flagged
+    expect(flaggedRowIds).not.toContain(4);
+    expect(flaggedRowIds).not.toContain(5);
+    expect(flaggedRowIds).not.toContain(6);
+  });
+
   it("returns an empty result for an empty input", () => {
     expect(flagOutliers([])).toEqual({
       threshold: 0.15,
