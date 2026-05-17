@@ -104,7 +104,6 @@ describe("ingestPdf integration (mocked mixed-path)", () => {
 
       expect(store.has(fileHash)).toBe(true);
 
-      // Verify chunks have correct sourceRef shape and stable per-page ordering.
       const sample = store.search(deterministicEmbed(longTextPage1), 100);
       expect(sample.length).toBeGreaterThanOrEqual(3);
       for (const hit of sample) {

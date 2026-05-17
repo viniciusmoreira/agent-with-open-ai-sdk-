@@ -119,7 +119,6 @@ describe("Chat — empty-state to first-message integration", () => {
     render(<Chat />);
     const input = screen.getByTestId("chat-input") as HTMLInputElement;
     await userEvent.type(input, "   ");
-    // Send button should be disabled for whitespace-only input.
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(sendMessage).not.toHaveBeenCalled();
   });

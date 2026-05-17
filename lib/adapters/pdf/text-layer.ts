@@ -22,7 +22,6 @@ export type PdfTextLayerOptions = {
    * Pages whose ratio falls below the threshold are flagged for Vision OCR.
    */
   printableRatio?: number;
-  /** Optional per-page progress hook; invoked after each page is processed. */
   onPage?: (page: PdfPageText) => void;
 };
 

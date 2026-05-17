@@ -123,7 +123,6 @@ describe("upload → ingest → SSE end-to-end (CSV)", () => {
     });
     const sseRes = handleIngestSse(sseReq, { subscribe });
     const reader = sseRes.body!.getReader();
-    // Drain initial comment frame.
     await reader.read();
 
     const blob = new Blob([SAMPLE_CSV], { type: "text/csv" });

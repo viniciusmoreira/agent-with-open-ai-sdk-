@@ -82,7 +82,6 @@ describe("handleIngestSse", () => {
     const readerB = resB.body!.getReader();
     const decoder = new TextDecoder();
 
-    // Drain initial comment frames.
     await readNextFrame(readerA, decoder);
     await readNextFrame(readerB, decoder);
 
@@ -121,7 +120,6 @@ describe("handleIngestSse", () => {
       subscribe: fakeSubscribe,
     });
     const reader = res.body!.getReader();
-    // Drain initial comment frame.
     await readNextFrame(reader, new TextDecoder());
     expect(subs).toHaveLength(1);
 

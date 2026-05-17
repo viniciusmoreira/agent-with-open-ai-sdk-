@@ -474,7 +474,6 @@ describe("ingestPdf", () => {
     expect(detail.kind).toBe("ocr");
     expect(detail.message).toContain("page 1");
     expect(detail.message).toContain("rasterizer crash");
-    // page 2 still succeeds via text path
     expect(store.upserts[0]!.chunks.map((c) => (c.sourceRef as { page: number }).page)).toEqual([2]);
   });
 

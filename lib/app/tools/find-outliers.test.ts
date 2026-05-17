@@ -27,7 +27,6 @@ function makeRow(
   };
 }
 
-// Group of 4 rows on (itemNo=100, unit=LS); row 4 is a clear outlier.
 const FIXTURE_ROWS: BidRow[] = [
   makeRow(1, { itemNo: "100", unit: "LS", unitPrice: 100, bidder: "A" }),
   makeRow(2, { itemNo: "100", unit: "LS", unitPrice: 105, bidder: "B" }),
