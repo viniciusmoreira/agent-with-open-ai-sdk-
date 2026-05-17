@@ -53,9 +53,17 @@ function FileRowImpl({ file }: FileRowProps) {
           variant="warning"
           data-testid="upload-file-unmapped"
         >
-          <AlertTitle>Some columns weren&apos;t recognized</AlertTitle>
+          <AlertTitle>
+            {file.unmapped.length} column
+            {file.unmapped.length === 1 ? "" : "s"} not mapped to bid fields
+          </AlertTitle>
           <AlertDescription>
-            The agent will ignore: {file.unmapped.join(", ")}
+            <p>Ignored: {file.unmapped.join(", ")}</p>
+            <p className="mt-1 text-xs">
+              The agent can still answer semantic questions about these
+              rows, but numeric queries (rankings, totals, outliers) will
+              only consider columns it recognized.
+            </p>
           </AlertDescription>
         </Alert>
       )}

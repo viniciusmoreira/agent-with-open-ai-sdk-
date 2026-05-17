@@ -87,5 +87,21 @@ describe("FileRow", () => {
     const warn = screen.getByTestId("upload-file-unmapped");
     expect(warn).toHaveTextContent(/MYSTERY_COLUMN/);
     expect(warn).toHaveTextContent(/Extra/);
+    expect(warn).toHaveTextContent(/2 columns not mapped/i);
+    expect(warn).toHaveTextContent(/numeric queries.*will only consider/i);
+  });
+
+  it("uses singular wording when exactly one column is unmapped", () => {
+    render(
+      <FileRow
+        file={makeFile({
+          status: "done",
+          chunks: 4,
+          unmapped: ["MYSTERY"],
+        })}
+      />,
+    );
+    const warn = screen.getByTestId("upload-file-unmapped");
+    expect(warn).toHaveTextContent(/1 column not mapped/i);
   });
 });
