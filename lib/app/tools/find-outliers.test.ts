@@ -120,6 +120,13 @@ describe("find_outliers tool — execute", () => {
     const result = await execute(tool, {});
     expect(result.flagged.length).toBeGreaterThan(0);
   });
+
+  it("returns empty flags when no rows are cached, so unmapped unitPrice fails safe", async () => {
+    const tool = createFindOutliersTool({ listRows: () => [] });
+    const result = await execute(tool, {});
+    expect(result.flagged).toEqual([]);
+    expect(result.total).toBe(0);
+  });
 });
 
 describe("find_outliers tool — result shape (TechSpec OutlierResult)", () => {
