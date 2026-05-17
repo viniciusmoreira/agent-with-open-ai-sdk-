@@ -115,7 +115,17 @@ What it asserts:
 
 What it costs (one-time, cached after the first run): a full CSV embedding pass, a per-page Vision OCR pass over `docs/plans.pdf`, and four agent turns with tool calls. Subsequent runs are near-instant because both caches (embeddings, OCR) are content-hashed under `.cache/`.
 
-Latest run: not yet recorded for this submission. The submission build chain is verified locally with `pnpm typecheck && pnpm test && pnpm lint` green; the smoke script is the final manual step before submission and its output should be pasted here.
+Latest run (2026-05-17, both fixtures cached, gpt-4o):
+
+```
+question-pass  top-N expensive items      query_bids        5.6s   1214 chars
+question-pass  deviation outliers         find_outliers     6.5s   1731 chars
+question-pass  drainage plan-set query    search_documents  4.2s    875 chars
+question-pass  key-quantities summary     query_bids        7.1s   1381 chars
+Smoke PASSED for all four spec questions.
+```
+
+The full JSON log lives at `/tmp/smoke-final.log` (regenerate with the command above). Build chain on the same commit: `pnpm typecheck` ✓, `pnpm lint` ✓, `pnpm test` ✓ (368 passed, 1 skipped).
 
 ## Repository layout
 
