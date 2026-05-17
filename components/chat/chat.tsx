@@ -26,10 +26,6 @@ export function Chat() {
   const isBusy = status === "submitted" || status === "streaming";
   const inputDisabled = isBusy || !ready;
 
-  // When a send fails, useChat keeps the user's failed turn in `messages` so
-  // it stays visible alongside the error. Submitting a new message after that
-  // would render two identical user bubbles. Drop the orphaned user turn
-  // first so the next submission shows once, in the right slot.
   const submit = useCallback(
     (text: string) => {
       const trimmed = text.trim();
@@ -53,8 +49,14 @@ export function Chat() {
   }, [clearError, regenerate]);
 
   const onSuggested = useCallback(
-    (question: string) => submit(question),
-    [submit],
+    (question: string) => {
+      if (ready && !isBusy) {
+        submit(question);
+        return;
+      }
+      setInput(question);
+    },
+    [ready, isBusy, submit],
   );
 
   const onSubmit = useCallback(
@@ -75,7 +77,7 @@ export function Chat() {
       <ScrollArea className="flex-1">
         <div className="flex flex-col gap-3">
           {isEmpty ? (
-            <EmptyState onSelect={onSuggested} disabled={inputDisabled} />
+            <EmptyState onSelect={onSuggested} disabled={isBusy} />
           ) : (
             messages.map((m) => <ChatMessage key={m.id} message={m} />)
           )}

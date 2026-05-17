@@ -49,6 +49,7 @@ vi.mock("@ai-sdk/react", () => ({
 
 import { Chat } from "@/components/chat/chat";
 import { SUGGESTED_QUESTIONS } from "@/components/chat/suggested-questions";
+import { UploadReadyProvider } from "@/components/upload-panel/upload-ready-context";
 
 beforeEach(() => {
   sendMessage.mockReset();
@@ -85,6 +86,22 @@ describe("Chat — empty-state to first-message integration", () => {
     expect(screen.getByTestId("message-user")).toHaveTextContent(
       SUGGESTED_QUESTIONS[0],
     );
+  });
+
+  it("clicking a suggested question while upload is not ready pre-fills the input instead of sending", async () => {
+    sendMessage.mockResolvedValue();
+    render(
+      <UploadReadyProvider>
+        <Chat />
+      </UploadReadyProvider>,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: SUGGESTED_QUESTIONS[0] }),
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+    const input = screen.getByTestId("chat-input") as HTMLInputElement;
+    expect(input.value).toBe(SUGGESTED_QUESTIONS[0]);
+    expect(screen.getByTestId("chat-empty-state")).toBeInTheDocument();
   });
 
   it("submitting the form sends the typed text and resets the input", async () => {
