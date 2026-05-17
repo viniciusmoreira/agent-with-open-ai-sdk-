@@ -4,8 +4,10 @@ import { getAllCsvRows } from "@/lib/app/csv-row-cache";
 import {
   rowsByBidder,
   rowsByItem,
+  summaryByUnit,
   topNByAmount,
   totalByProject,
+  type UnitSummary,
 } from "@/lib/domain/csv/query";
 import type { BidRow } from "@/lib/domain/types";
 
@@ -20,6 +22,7 @@ export const queryBidsInputSchema = z
       "total_by_project",
       "rows_by_bidder",
       "rows_by_item",
+      "summary_by_unit",
     ]),
     n: z.number().int().positive().max(MAX_TOP_N).optional(),
     project: z.string().min(1).optional(),
@@ -27,6 +30,36 @@ export const queryBidsInputSchema = z
     itemNo: z.string().min(1).optional(),
   })
   .strict();
+
+// The agent treats optional filters as "match anything" placeholders when in
+// doubt — observed values include ".*", "*", "%", "all", "unknown", "N/A",
+// "omit", ".", and bare whitespace. Rejecting these at the schema level
+// pushes the LLM into a retry loop where it cycles through synonyms. Accept
+// any non-empty string at the boundary and drop the meaningless ones inside
+// `execute` instead: a missing filter is the documented "no scope" path.
+const WILDCARD_TOKENS = new Set([
+  ".*",
+  "*",
+  "%",
+  "all",
+  "any",
+  "*.*",
+  "n/a",
+  "na",
+  "none",
+  "unknown",
+  "omit",
+  "null",
+]);
+const ALPHANUMERIC = /[A-Za-z0-9]/;
+function meaningfulFilter(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (!ALPHANUMERIC.test(trimmed)) return undefined;
+  if (WILDCARD_TOKENS.has(trimmed.toLowerCase())) return undefined;
+  return trimmed;
+}
 
 export type QueryBidsInput = z.infer<typeof queryBidsInputSchema>;
 
@@ -44,6 +77,10 @@ export type QueryBidsResultRow = {
 export type QueryBidsResult = {
   summary: string;
   rows: QueryBidsResultRow[];
+  // Populated by `summary_by_unit` only. Each entry aggregates the rows whose
+  // `unit` column matches; `sampleRowIds` is included in the flat `rows` array
+  // above so existing citation extraction keeps working.
+  unitGroups?: UnitSummary[];
 };
 
 const DESCRIPTION = [
@@ -54,7 +91,9 @@ const DESCRIPTION = [
   "  - total_by_project: sums extAmt across rows whose projectId matches the supplied `project` (case-insensitive exact match).",
   "  - rows_by_bidder: returns rows whose bidder contains the supplied `bidder` substring (case-insensitive). Optional `itemNo` and `project` narrow the result, so you can answer 'what did Bidder X bid for Item Y?' in one call.",
   "  - rows_by_item: returns rows whose itemNo matches the supplied `itemNo` (case-insensitive exact). Optional `bidder` and `project` narrow the result.",
+  "  - summary_by_unit: groups every row by its `unit` column (LS, CY, TON, SY, LF, EA, ACRE, …) and returns per-unit count, totalQty, totalExtAmt, plus up to three sample rowIds per group. Use this for 'summarize key quantities' or 'breakdown by unit of measure' questions — a single call covers all units, so do NOT loop one call per unit.",
   "Each returned row carries its `rowId` so callers can render citations. Prefer this tool over search_documents for any question about rankings, sums, prices, bidders, or item numbers.",
+  "Filter usage: `project`, `bidder`, and `itemNo` are OPTIONAL. To rank or list across the whole bid, OMIT them entirely. Do NOT send wildcards like \".*\", \"*\", \"%\", or \"all\" — the tool matches literally, so a wildcard returns 0 rows.",
 ].join("\n");
 
 export type QueryBidsDeps = {
@@ -89,64 +128,87 @@ export function runQuery(
   input: QueryBidsInput,
   rows: readonly BidRow[],
 ): QueryBidsResult {
+  // Strip filter values that don't carry concrete content. The agent often
+  // passes wildcard placeholders for optional fields; treating those as
+  // "no filter" matches the description and keeps results deterministic.
+  const project = meaningfulFilter(input.project);
+  const bidder = meaningfulFilter(input.bidder);
+  const itemNo = meaningfulFilter(input.itemNo);
+  const filter: RowFilter = { project, bidder, itemNo };
+
   switch (input.operation) {
     case "top_n_by_amount": {
       const n = input.n ?? DEFAULT_TOP_N;
-      const scoped = filterRows(rows, input);
+      const scoped = filterRows(rows, filter);
       const result = topNByAmount(scoped, n);
-      const scope = scopeLabel(input);
+      const scope = scopeLabel(filter);
       return {
         summary: `Top ${result.length} of ${scoped.length} row(s) by extended amount${scope}.`,
         rows: result.map(projectRow),
       };
     }
     case "total_by_project": {
-      if (!input.project) {
+      if (!project) {
         return {
-          summary: "Missing required field 'project' for total_by_project.",
+          summary:
+            "Missing required field 'project' for total_by_project (it must contain alphanumeric content).",
           rows: [],
         };
       }
-      const { total, rows: matched } = totalByProject(rows, input.project);
+      const { total, rows: matched } = totalByProject(rows, project);
       return {
-        summary: `Total extAmt for project '${input.project}' = ${total} across ${matched.length} row(s).`,
+        summary: `Total extAmt for project '${project}' = ${total} across ${matched.length} row(s).`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
       };
     }
     case "rows_by_bidder": {
-      if (!input.bidder) {
+      if (!bidder) {
         return {
-          summary: "Missing required field 'bidder' for rows_by_bidder.",
+          summary:
+            "Missing required field 'bidder' for rows_by_bidder (it must contain alphanumeric content).",
           rows: [],
         };
       }
-      const primary = rowsByBidder(rows, input.bidder);
-      const matched = filterRows(primary, {
-        project: input.project,
-        itemNo: input.itemNo,
-      });
-      const scope = scopeLabel({ project: input.project, itemNo: input.itemNo });
+      const primary = rowsByBidder(rows, bidder);
+      const matched = filterRows(primary, { project, itemNo });
+      const scope = scopeLabel({ project, itemNo });
       return {
-        summary: `${matched.length} row(s) match bidder '${input.bidder}'${scope}.`,
+        summary: `${matched.length} row(s) match bidder '${bidder}'${scope}.`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
       };
     }
     case "rows_by_item": {
-      if (!input.itemNo) {
+      if (!itemNo) {
         return {
-          summary: "Missing required field 'itemNo' for rows_by_item.",
+          summary:
+            "Missing required field 'itemNo' for rows_by_item (it must contain alphanumeric content).",
           rows: [],
         };
       }
-      const primary = rowsByItem(rows, input.itemNo);
-      const matched = filterRows(primary, {
-        project: input.project,
-        bidder: input.bidder,
-      });
-      const scope = scopeLabel({ project: input.project, bidder: input.bidder });
+      const primary = rowsByItem(rows, itemNo);
+      const matched = filterRows(primary, { project, bidder });
+      const scope = scopeLabel({ project, bidder });
       return {
-        summary: `${matched.length} row(s) match itemNo '${input.itemNo}'${scope}.`,
+        summary: `${matched.length} row(s) match itemNo '${itemNo}'${scope}.`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
+      };
+    }
+    case "summary_by_unit": {
+      const scoped = filterRows(rows, filter);
+      const groups = summaryByUnit(scoped);
+      const scope = scopeLabel(filter);
+      const sampleIds = new Set<number>();
+      for (const g of groups) {
+        for (const id of g.sampleRowIds) sampleIds.add(id);
+      }
+      const sampleRows = scoped
+        .filter((row) => sampleIds.has(row.rowId))
+        .slice(0, MAX_RESULT_ROWS)
+        .map(projectRow);
+      return {
+        summary: `${groups.length} unit group(s) across ${scoped.length} row(s)${scope}.`,
+        rows: sampleRows,
+        unitGroups: groups,
       };
     }
   }

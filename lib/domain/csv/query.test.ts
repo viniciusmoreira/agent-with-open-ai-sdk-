@@ -5,6 +5,7 @@ import type { BidRow } from "@/lib/domain/types";
 import {
   rowsByBidder,
   rowsByItem,
+  summaryByUnit,
   topNByAmount,
   totalByProject,
 } from "./query";
@@ -92,5 +93,50 @@ describe("rowsByItem", () => {
 
   it("does not match substrings", () => {
     expect(rowsByItem(sample, "10")).toEqual([]);
+  });
+});
+
+describe("summaryByUnit", () => {
+  it("groups by unit and sorts by totalExtAmt descending", () => {
+    const groups = summaryByUnit(sample);
+    expect(groups.map((g) => g.unit)).toEqual(["LS", "SY", "TON", "CY"]);
+    const ls = groups.find((g) => g.unit === "LS")!;
+    expect(ls.count).toBe(2);
+    expect(ls.totalExtAmt).toBe(500);
+    expect(ls.sampleRowIds).toEqual([1, 4]);
+  });
+
+  it("caps sampleRowIds at three per group", () => {
+    const rows: BidRow[] = Array.from({ length: 5 }, (_, i) =>
+      makeRow(i + 10, {
+        itemNo: `5${i}`,
+        unit: "EA",
+        unitPrice: 1,
+        bidder: "X",
+        projectId: "PA",
+        extAmt: 1,
+      }),
+    );
+    const groups = summaryByUnit(rows);
+    expect(groups[0]!.sampleRowIds).toHaveLength(3);
+  });
+
+  it("buckets blank-unit rows under '(blank)' instead of dropping them", () => {
+    const rows = [
+      makeRow(99, {
+        itemNo: "999",
+        unit: "  ",
+        unitPrice: 1,
+        bidder: "X",
+        projectId: "PA",
+        extAmt: 1,
+      }),
+    ];
+    const groups = summaryByUnit(rows);
+    expect(groups[0]!.unit).toBe("(blank)");
+  });
+
+  it("returns an empty array for no rows", () => {
+    expect(summaryByUnit([])).toEqual([]);
   });
 });

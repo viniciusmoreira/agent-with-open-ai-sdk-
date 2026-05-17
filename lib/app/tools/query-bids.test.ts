@@ -88,14 +88,28 @@ describe("query_bids tool — input schema (strict)", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("accepts the four documented operations", () => {
+  it("accepts the five documented operations", () => {
     for (const op of [
       "top_n_by_amount",
       "total_by_project",
       "rows_by_bidder",
       "rows_by_item",
+      "summary_by_unit",
     ] as const) {
       expect(queryBidsInputSchema.safeParse({ operation: op }).success).toBe(true);
+    }
+  });
+
+  it("accepts any non-empty filter string at the schema level", () => {
+    // Boundary is permissive on purpose — wildcards are stripped inside
+    // execute() so the LLM doesn't get into a retry loop guessing synonyms.
+    for (const v of [".*", "all", "unknown", "ALPHA SPACE", "."]) {
+      expect(
+        queryBidsInputSchema.safeParse({
+          operation: "top_n_by_amount",
+          project: v,
+        }).success,
+      ).toBe(true);
     }
   });
 });
@@ -147,6 +161,55 @@ describe("query_bids tool — execute via injected rows", () => {
     const result = await execute(tool, { operation: "top_n_by_amount", n: 3 });
     expect(result.rows).toEqual([]);
     expect(result.summary).toMatch(/no.*csv/i);
+  });
+
+  // Regression: the LLM frequently fills optional filters with placeholder
+  // tokens it doesn't actually intend as scopes. execute() must strip these
+  // and return the full result set, NOT an empty one.
+  it.each([
+    [".*", ".*", ".*"],
+    ["*", "*", "*"],
+    ["all", "all", "all"],
+    ["unknown", "unknown", "unknown"],
+    ["N/A", "N/A", "N/A"],
+    [" ", " ", " "],
+    [".", ".", "."],
+    ["omit", "omit", "omit"],
+  ])(
+    "treats wildcard placeholder project=%s bidder=%s itemNo=%s as no filter and returns the full top-N",
+    async (project, bidder, itemNo) => {
+      const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+      const result = await execute(tool, {
+        operation: "top_n_by_amount",
+        n: 5,
+        project,
+        bidder,
+        itemNo,
+      });
+      expect(result.rows.length).toBe(5);
+      expect(result.rows.every((r) => typeof r.rowId === "number")).toBe(true);
+    },
+  );
+
+  it("summary_by_unit returns grouped totals plus sample rows for citations", async () => {
+    const tool = createQueryBidsTool({ listRows: () => FIXTURE_ROWS });
+    const result = await execute(tool, { operation: "summary_by_unit" });
+    expect(result.unitGroups).toBeDefined();
+    expect(result.unitGroups!.length).toBe(4);
+    expect(result.unitGroups!.map((g) => g.unit)).toEqual([
+      "LS",
+      "SY",
+      "TON",
+      "CY",
+    ]);
+    // Flat `rows` must include at least one rowId per group so the smoke
+    // citation extractor finds something to cite.
+    const rowIds = new Set(result.rows.map((r) => r.rowId));
+    for (const g of result.unitGroups!) {
+      for (const id of g.sampleRowIds) {
+        expect(rowIds.has(id)).toBe(true);
+      }
+    }
   });
 
   it("returns a missing-field summary when total_by_project receives no project", async () => {

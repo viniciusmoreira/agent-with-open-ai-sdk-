@@ -31,6 +31,43 @@ export function rowsByItem(rows: readonly BidRow[], itemNo: string): BidRow[] {
   return rows.filter((row) => normalize(row.itemNo) === needle);
 }
 
+export type UnitSummary = {
+  unit: string;
+  count: number;
+  totalQty: number;
+  totalExtAmt: number;
+  sampleRowIds: number[];
+};
+
+/**
+ * Groups rows by their `unit` column and reports per-group counts and totals.
+ * `sampleRowIds` carries up to three example rowIds per group so the agent can
+ * cite at least one row when summarizing — without that, "summarize by unit"
+ * questions return totals but no rowId for the smoke citation assertion.
+ */
+export function summaryByUnit(rows: readonly BidRow[]): UnitSummary[] {
+  const groups = new Map<string, UnitSummary>();
+  for (const row of rows) {
+    const unit = row.unit.trim() || "(blank)";
+    let g = groups.get(unit);
+    if (!g) {
+      g = {
+        unit,
+        count: 0,
+        totalQty: 0,
+        totalExtAmt: 0,
+        sampleRowIds: [],
+      };
+      groups.set(unit, g);
+    }
+    g.count++;
+    g.totalQty += row.qty;
+    g.totalExtAmt += row.extAmt;
+    if (g.sampleRowIds.length < 3) g.sampleRowIds.push(row.rowId);
+  }
+  return [...groups.values()].sort((a, b) => b.totalExtAmt - a.totalExtAmt);
+}
+
 function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
