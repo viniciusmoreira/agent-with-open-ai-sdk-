@@ -24,8 +24,16 @@ const uiMessageSchema = z
   })
   .passthrough();
 
+// Vercel AI SDK `useChat` (v5+) sends { id, trigger, messages, messageId? }.
+// We allow only those four fields and consume only `messages`; the rest is
+// metadata for client-side bookkeeping (chat session id, why the request fired,
+// the message being regenerated). Strict so any new top-level field upstream
+// surfaces here instead of being silently ignored.
 const chatBodySchema = z
   .object({
+    id: z.string().optional(),
+    trigger: z.enum(["submit-message", "regenerate-message"]).optional(),
+    messageId: z.string().optional(),
     messages: z.array(uiMessageSchema).min(1).max(MAX_MESSAGES),
   })
   .strict();

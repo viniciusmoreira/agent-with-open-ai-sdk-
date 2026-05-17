@@ -103,6 +103,59 @@ describe("POST /api/chat — request validation", () => {
     expect(runAgentMock).not.toHaveBeenCalled();
   });
 
+  // Regression: the Vercel AI SDK v5 `useChat` client posts a body with extra
+  // metadata fields beyond `messages`. We accept that shape explicitly under
+  // `.strict()` — adding a new field upstream must consciously update the
+  // schema, not silently pass via `.passthrough()`.
+  it("accepts the useChat v5 envelope { id, trigger, messages }", async () => {
+    runAgentMock.mockResolvedValueOnce(makeStreamResult());
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "chat-session-abc",
+        trigger: "submit-message",
+        messages: [uiMessage("user", "hi")],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(runAgentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the useChat regenerate envelope with messageId", async () => {
+    runAgentMock.mockResolvedValueOnce(makeStreamResult());
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "chat-session-abc",
+        trigger: "regenerate-message",
+        messageId: "msg-to-regenerate",
+        messages: [uiMessage("user", "hi")],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects an unknown trigger value with HTTP 400", async () => {
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        trigger: "some-new-trigger",
+        messages: [uiMessage("user", "hi")],
+      }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
   it("rejects messages with an invalid role with HTTP 400", async () => {
     const { POST } = await importRoute();
     const req = new Request("http://localhost/api/chat", {
