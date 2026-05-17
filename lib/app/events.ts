@@ -11,7 +11,12 @@ export type SubscribeOptions = {
   fileHash?: string;
 };
 
-const subscribers = new Set<IngestEventHandler>();
+const globalForEvents = globalThis as unknown as {
+  __ingestSubscribers?: Set<IngestEventHandler>;
+};
+const subscribers: Set<IngestEventHandler> =
+  globalForEvents.__ingestSubscribers ?? new Set<IngestEventHandler>();
+globalForEvents.__ingestSubscribers = subscribers;
 
 export function emit(event: IngestEvent): void {
   for (const handler of subscribers) {

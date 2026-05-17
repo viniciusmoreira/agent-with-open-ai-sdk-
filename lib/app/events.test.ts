@@ -237,3 +237,29 @@ describe("event bus topic filter", () => {
     expect(received).toEqual([aHashEvent, bHashEvent]);
   });
 });
+
+// Regression for the Next.js dev bundle-splitting bug: `/api/ingest` and
+// `/api/upload` were getting separate copies of this module, so a SSE
+// subscriber registered through copy A never saw events emitted through copy B
+// — the upload UI sat forever on "Starting…". Pinning `subscribers` on
+// `globalThis` makes the singleton survive parallel module evaluation.
+describe("event bus singleton across module instances", () => {
+  it("preserves subscribers when the module is re-evaluated", async () => {
+    vi.resetModules();
+    const copyA = await import("./events");
+    copyA.__resetEventBusForTests();
+    const received: IngestEvent[] = [];
+    copyA.subscribe((event) => {
+      received.push(event);
+    });
+
+    // Force a fresh evaluation of the same source file. In Next.js dev this
+    // happens implicitly when separate route bundles compile.
+    vi.resetModules();
+    const copyB = await import("./events");
+    copyB.emit(sampleEvent);
+
+    expect(received).toEqual([sampleEvent]);
+    copyA.__resetEventBusForTests();
+  });
+});
