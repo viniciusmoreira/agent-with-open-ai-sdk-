@@ -12,21 +12,45 @@ import { EmptyState } from "./empty-state";
 import { ChatMessage } from "./message";
 
 export function Chat() {
-  const { messages, sendMessage, status, error } = useChat();
+  const {
+    messages,
+    sendMessage,
+    regenerate,
+    setMessages,
+    clearError,
+    status,
+    error,
+  } = useChat();
   const [input, setInput] = useState("");
   const { ready } = useUploadReady();
   const isBusy = status === "submitted" || status === "streaming";
   const inputDisabled = isBusy || !ready;
 
+  // When a send fails, useChat keeps the user's failed turn in `messages` so
+  // it stays visible alongside the error. Submitting a new message after that
+  // would render two identical user bubbles. Drop the orphaned user turn
+  // first so the next submission shows once, in the right slot.
   const submit = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || isBusy) return;
       setInput("");
+      if (error) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          return last?.role === "user" ? prev.slice(0, -1) : prev;
+        });
+        clearError();
+      }
       void sendMessage({ text: trimmed });
     },
-    [isBusy, sendMessage],
+    [isBusy, sendMessage, error, setMessages, clearError],
   );
+
+  const onRetry = useCallback(() => {
+    clearError();
+    void regenerate();
+  }, [clearError, regenerate]);
 
   const onSuggested = useCallback(
     (question: string) => submit(question),
@@ -60,9 +84,19 @@ export function Chat() {
       {error && (
         <div
           data-testid="chat-error"
-          className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
+          className="flex items-center justify-between gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
         >
-          {error.message}
+          <span className="flex-1">{error.message}</span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onRetry}
+            disabled={isBusy}
+            data-testid="chat-retry"
+          >
+            Retry
+          </Button>
         </div>
       )}
       <form

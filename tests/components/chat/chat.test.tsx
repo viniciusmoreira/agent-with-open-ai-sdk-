@@ -11,9 +11,12 @@ type FakeMessage = {
 };
 
 const sendMessage = vi.fn<(input: { text: string }) => Promise<void>>();
+const regenerate = vi.fn<() => Promise<void>>();
+const clearError = vi.fn<() => void>();
 let messagesRef: FakeMessage[] = [];
 let setMessagesRef: ((next: FakeMessage[]) => void) | null = null;
 let statusRef: "ready" | "submitted" | "streaming" = "ready";
+let errorRef: Error | undefined = undefined;
 
 vi.mock("@ai-sdk/react", () => ({
   useChat: () => {
@@ -22,11 +25,24 @@ vi.mock("@ai-sdk/react", () => ({
       messagesRef = next;
       setMessages(next);
     };
+    const setMessagesApi = (
+      updater: FakeMessage[] | ((prev: FakeMessage[]) => FakeMessage[]),
+    ) => {
+      const next =
+        typeof updater === "function"
+          ? (updater as (prev: FakeMessage[]) => FakeMessage[])(messages)
+          : updater;
+      messagesRef = next;
+      setMessages(next);
+    };
     return {
       messages,
       sendMessage,
+      regenerate,
+      setMessages: setMessagesApi,
+      clearError,
       status: statusRef,
-      error: undefined,
+      error: errorRef,
     };
   },
 }));
@@ -36,9 +52,12 @@ import { SUGGESTED_QUESTIONS } from "@/components/chat/suggested-questions";
 
 beforeEach(() => {
   sendMessage.mockReset();
+  regenerate.mockReset();
+  clearError.mockReset();
   messagesRef = [];
   setMessagesRef = null;
   statusRef = "ready";
+  errorRef = undefined;
 });
 
 describe("Chat — empty-state to first-message integration", () => {
@@ -117,5 +136,42 @@ describe("Chat — empty-state to first-message integration", () => {
     );
     expect(textNodeAfter).toBe(textNode);
     expect(textNodeAfter).toHaveTextContent("Hello world");
+  });
+});
+
+describe("Chat — error recovery", () => {
+  it("renders a Retry button on error that calls regenerate after clearing the error", async () => {
+    errorRef = new Error("boom");
+    messagesRef = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "hello?" }] },
+    ];
+    render(<Chat />);
+    const retry = screen.getByTestId("chat-retry");
+    expect(retry).toBeInTheDocument();
+    await userEvent.click(retry);
+    expect(clearError).toHaveBeenCalledTimes(1);
+    expect(regenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it("submitting a new message while in error drops the failed user turn instead of duplicating it", async () => {
+    errorRef = new Error("boom");
+    messagesRef = [
+      { id: "u1", role: "user", parts: [{ type: "text", text: "first try" }] },
+    ];
+    sendMessage.mockImplementation(async ({ text }) => {
+      // The failed user message should be gone before sendMessage runs; the
+      // new submission is what the user sees in the transcript.
+      expect(messagesRef.find((m) => m.id === "u1")).toBeUndefined();
+      messagesRef = [
+        { id: "u2", role: "user", parts: [{ type: "text", text }] },
+      ];
+      setMessagesRef?.(messagesRef);
+    });
+    render(<Chat />);
+    const input = screen.getByTestId("chat-input") as HTMLInputElement;
+    await userEvent.type(input, "second try");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(sendMessage).toHaveBeenCalledWith({ text: "second try" });
+    expect(clearError).toHaveBeenCalledTimes(1);
   });
 });
