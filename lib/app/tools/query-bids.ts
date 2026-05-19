@@ -156,8 +156,9 @@ export function runQuery(
         };
       }
       const { total, rows: matched } = totalByProject(rows, project);
+      const trunc = truncationNote(matched.length);
       return {
-        summary: `Total extAmt for project '${project}' = ${total} across ${matched.length} row(s).`,
+        summary: `Total extAmt for project '${project}' = ${total} across ${matched.length} row(s)${trunc}.`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
       };
     }
@@ -172,8 +173,9 @@ export function runQuery(
       const primary = rowsByBidder(rows, bidder);
       const matched = filterRows(primary, { project, itemNo });
       const scope = scopeLabel({ project, itemNo });
+      const trunc = truncationNote(matched.length);
       return {
-        summary: `${matched.length} row(s) match bidder '${bidder}'${scope}.`,
+        summary: `${matched.length} row(s) match bidder '${bidder}'${scope}${trunc}.`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
       };
     }
@@ -188,8 +190,9 @@ export function runQuery(
       const primary = rowsByItem(rows, itemNo);
       const matched = filterRows(primary, { project, bidder });
       const scope = scopeLabel({ project, bidder });
+      const trunc = truncationNote(matched.length);
       return {
-        summary: `${matched.length} row(s) match itemNo '${itemNo}'${scope}.`,
+        summary: `${matched.length} row(s) match itemNo '${itemNo}'${scope}${trunc}.`,
         rows: matched.slice(0, MAX_RESULT_ROWS).map(projectRow),
       };
     }
@@ -212,6 +215,11 @@ export function runQuery(
       };
     }
   }
+}
+
+function truncationNote(matchedLength: number): string {
+  if (matchedLength <= MAX_RESULT_ROWS) return "";
+  return ` (showing first ${MAX_RESULT_ROWS}; ${matchedLength - MAX_RESULT_ROWS} more truncated)`;
 }
 
 type RowFilter = {

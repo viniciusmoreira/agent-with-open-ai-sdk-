@@ -341,3 +341,27 @@ describe("query_bids tool — bidder/item intersection", () => {
     expect(result.rows.map((r) => r.rowId)).toEqual([4]);
   });
 });
+
+describe("query_bids tool — truncation", () => {
+  it("returns only MAX_RESULT_ROWS rows and reports the pre-cap total in the summary", async () => {
+    const wideRows: BidRow[] = Array.from({ length: 250 }, (_, i) =>
+      makeRow(i + 1, {
+        itemNo: "777",
+        unit: "EA",
+        unitPrice: 1,
+        bidder: `BIDDER_${i + 1}`,
+        projectId: "PA",
+        extAmt: 1,
+      }),
+    );
+    const tool = createQueryBidsTool({ listRows: () => wideRows });
+    const result = await execute(tool, {
+      operation: "rows_by_item",
+      itemNo: "777",
+    });
+    expect(result.rows).toHaveLength(200);
+    expect(result.summary).toContain("250 row(s) match itemNo '777'");
+    expect(result.summary).toContain("showing first 200");
+    expect(result.summary).toContain("50 more truncated");
+  });
+});
