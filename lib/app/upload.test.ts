@@ -288,6 +288,20 @@ describe("handleUpload", () => {
     expect(runs).toHaveLength(0);
   });
 
+  it("rejects with 413 before buffering when Content-Length exceeds maxBytes", async () => {
+    const { deps, runs, mkdirs, writes } = makeDeps({ maxBytes: 8 });
+    const req = new Request("http://localhost/api/upload", {
+      method: "POST",
+      headers: { "content-type": "multipart/form-data; boundary=x", "content-length": "99999" },
+      body: "",
+    });
+    const res = await handleUpload(req, deps);
+    expect(res.status).toBe(413);
+    expect(runs).toHaveLength(0);
+    expect(mkdirs).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+  });
+
   it("returns 500 when persisting the upload fails", async () => {
     const { deps } = makeDeps({
       writeFile: async () => {

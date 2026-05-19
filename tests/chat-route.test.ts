@@ -243,6 +243,21 @@ describe("POST /api/chat — request validation", () => {
     expect(runAgentMock).not.toHaveBeenCalled();
   });
 
+  it("rejects with HTTP 413 before parsing JSON when Content-Length exceeds the cap", async () => {
+    const { POST } = await importRoute();
+    const req = new Request("http://localhost/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": "300000",
+      },
+      body: "",
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
   it("returns HTTP 400 when runAgent throws while converting messages", async () => {
     runAgentMock.mockRejectedValueOnce(new Error("invalid UI message"));
     const { POST } = await importRoute();

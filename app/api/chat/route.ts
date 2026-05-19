@@ -39,6 +39,11 @@ const chatBodySchema = z
   .strict();
 
 export async function POST(request: Request): Promise<Response> {
+  const advertised = parseContentLength(request.headers.get("content-length"));
+  if (advertised !== null && advertised > MAX_TOTAL_PAYLOAD_CHARS) {
+    return jsonError(413, "Chat transcript exceeds the maximum allowed size");
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -65,6 +70,14 @@ export async function POST(request: Request): Promise<Response> {
 
 function transcriptCharSize(messages: ReadonlyArray<unknown>): number {
   return JSON.stringify(messages).length;
+}
+
+function parseContentLength(raw: string | null): number | null {
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function jsonError(status: number, message: string): Response {

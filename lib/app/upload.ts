@@ -64,6 +64,11 @@ export async function handleUpload(
   const tmpDir = deps.tmpDir ?? path.join(process.cwd(), "tmp");
   const dispatch = deps.dispatch ?? defaultDispatch;
 
+  const advertised = parseContentLength(request.headers.get("content-length"));
+  if (advertised !== null && advertised > deps.maxBytes) {
+    return jsonError(413, `Upload exceeds the ${deps.maxBytes}-byte limit`);
+  }
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -295,6 +300,14 @@ function defaultWriteFile(filePath: string, data: Uint8Array): Promise<void> {
 
 function defaultUnlink(filePath: string): Promise<void> {
   return fsUnlink(filePath);
+}
+
+function parseContentLength(raw: string | null): number | null {
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 function isMissingFileError(err: unknown): boolean {
