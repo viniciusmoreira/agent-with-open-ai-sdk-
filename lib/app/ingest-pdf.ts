@@ -93,6 +93,7 @@ export async function ingestPdf(
 
   const totalPages = textResult.pages.length;
   if (totalPages === 0) {
+    emit({ kind: "file-done", file, chunks: 0, cached: false });
     return;
   }
 

@@ -289,6 +289,38 @@ describe("ingestPdf", () => {
     expect(store.upserts).toHaveLength(0);
   });
 
+  it("emits a terminal file-done with chunks:0 when the PDF has zero pages", async () => {
+    const events: Recorded = [];
+    const { port: pdfText, extract } = makePdfText({ pages: [], errors: [] });
+    const ocr = makeOcr();
+    const { port: embeddings, embed } = makeEmbeddings();
+    const store = makeStore();
+
+    await ingestPdf(
+      "/tmp/zero.pdf",
+      "hash-zero",
+      (e) => events.push(e),
+      baseDeps({
+        pdfText,
+        ocr: ocr.port,
+        embeddings,
+        store: store.store,
+      }),
+    );
+
+    expect(events.map((e) => e.kind)).toEqual(["file-start", "file-done"]);
+    expect(events[1]).toMatchObject({
+      kind: "file-done",
+      file: "zero.pdf",
+      chunks: 0,
+      cached: false,
+    });
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(ocr.call).not.toHaveBeenCalled();
+    expect(embed).not.toHaveBeenCalled();
+    expect(store.upserts).toHaveLength(0);
+  });
+
   it("OCR failure on one page emits file-error and continues with later pages", async () => {
     const events: Recorded = [];
     const { port: pdfText } = makePdfText({

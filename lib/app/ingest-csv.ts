@@ -161,6 +161,7 @@ export async function ingestCsv(
   }
 
   if (result.rows.length === 0) {
+    emit({ kind: "file-done", file, chunks: 0, cached: false });
     return;
   }
 

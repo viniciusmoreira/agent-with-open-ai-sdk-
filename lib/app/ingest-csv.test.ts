@@ -356,7 +356,11 @@ describe("ingestCsv", () => {
 
     await ingestCsv("/tmp/bad.csv", "hash-bad", (e) => events.push(e), deps);
 
-    expect(events.map((e) => e.kind)).toEqual(["file-start", "file-error"]);
+    expect(events.map((e) => e.kind)).toEqual([
+      "file-start",
+      "file-error",
+      "file-done",
+    ]);
     const errorEvent = events[1]!;
     expect(errorEvent).toMatchObject({
       kind: "file-error",
@@ -367,10 +371,44 @@ describe("ingestCsv", () => {
       rowId: 1,
       missing: ["unitPrice"],
     });
+    expect(events[2]).toMatchObject({
+      kind: "file-done",
+      file: "bad.csv",
+      chunks: 0,
+      cached: false,
+    });
 
     expect(embed).not.toHaveBeenCalled();
     expect(store.upserts).toHaveLength(0);
     expect(getCsvRows("hash-bad")).toBeUndefined();
+  });
+
+  it("emits a terminal file-done with chunks:0 when parse returns no rows and no errors", async () => {
+    const events: Recorded = [];
+    const parsed: ParseResult = {
+      rows: [],
+      columnMap: emptyColumnMap(),
+      unmapped: [],
+      errors: [],
+    };
+    const { deps, store, embed } = makeDeps({
+      readFile: async () => "header-only",
+      statFile: async () => ({ size: 50 }),
+      parse: () => parsed,
+    });
+
+    await ingestCsv("/tmp/empty.csv", "hash-empty", (e) => events.push(e), deps);
+
+    expect(events.map((e) => e.kind)).toEqual(["file-start", "file-done"]);
+    expect(events[1]).toMatchObject({
+      kind: "file-done",
+      file: "empty.csv",
+      chunks: 0,
+      cached: false,
+    });
+    expect(embed).not.toHaveBeenCalled();
+    expect(store.upserts).toHaveLength(0);
+    expect(getCsvRows("hash-empty")).toBeUndefined();
   });
 
   it("includes unmapped headers in the file-done payload", async () => {
