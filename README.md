@@ -125,7 +125,7 @@ question-pass  key-quantities summary     query_bids        7.1s   1381 chars
 Smoke PASSED for all four spec questions.
 ```
 
-The full JSON log lives at `/tmp/smoke-final.log` (regenerate with the command above). Build chain on the same commit: `pnpm typecheck` ✓, `pnpm lint` ✓, `pnpm test` ✓ (368 passed, 1 skipped).
+The full JSON log lives at `/tmp/smoke-final.log` (regenerate with the command above). Build chain on the same commit: `pnpm typecheck` ✓, `pnpm lint` ✓, `pnpm test` ✓ (389 passed, 1 skipped).
 
 ## Repository layout
 
