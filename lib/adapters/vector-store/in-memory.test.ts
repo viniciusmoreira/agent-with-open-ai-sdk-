@@ -448,6 +448,86 @@ describe("InMemoryVectorStore singleton export", () => {
   });
 });
 
+describe("InMemoryVectorStore.list", () => {
+  let workDir: string;
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(path.join(tmpdir(), "vstore-list-"));
+  });
+
+  afterEach(async () => {
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  it("returns [] before any upsert or hydrate", () => {
+    const store = new InMemoryVectorStore({
+      embeddingModel: MODEL,
+      cacheBaseDir: workDir,
+    });
+    expect(store.list()).toEqual([]);
+  });
+
+  it("summarises CSV and PDF documents with kind, displayName, chunks", async () => {
+    const store = new InMemoryVectorStore({
+      embeddingModel: MODEL,
+      cacheBaseDir: workDir,
+    });
+    const csvHash = "abc123";
+    const pdfHash = "def456";
+    await store.upsert(csvHash, [
+      chunk("c1", [1, 0], {
+        type: "csv-row",
+        file: `/tmp/${csvHash}-bid-tab.csv`,
+        rowId: 1,
+      }),
+      chunk("c2", [0, 1], {
+        type: "csv-row",
+        file: `/tmp/${csvHash}-bid-tab.csv`,
+        rowId: 2,
+      }),
+    ]);
+    await store.upsert(pdfHash, [
+      chunk("p1", [1, 0], {
+        type: "pdf-page",
+        file: `/tmp/${pdfHash}-plans.pdf`,
+        page: 1,
+        chunkIndex: 0,
+      }),
+    ]);
+
+    const list = store.list();
+    const byHash = Object.fromEntries(list.map((d) => [d.fileHash, d]));
+    expect(byHash[csvHash]).toEqual({
+      fileHash: csvHash,
+      kind: "csv",
+      displayName: "bid-tab.csv",
+      chunks: 2,
+    });
+    expect(byHash[pdfHash]).toEqual({
+      fileHash: pdfHash,
+      kind: "pdf",
+      displayName: "plans.pdf",
+      chunks: 1,
+    });
+  });
+
+  it("returns basename as displayName when the hash prefix is absent", async () => {
+    const store = new InMemoryVectorStore({
+      embeddingModel: MODEL,
+      cacheBaseDir: workDir,
+    });
+    await store.upsert("h", [
+      chunk("c", [1, 0], {
+        type: "csv-row",
+        file: "/some/path/raw-name.csv",
+        rowId: 1,
+      }),
+    ]);
+    const [doc] = store.list();
+    expect(doc?.displayName).toBe("raw-name.csv");
+  });
+});
+
 describe("InMemoryVectorStore.upsert overwrite", () => {
   let workDir: string;
 

@@ -3,7 +3,12 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { Chunk } from "@/lib/domain/types";
-import type { SearchHit, SourceFilter, VectorStorePort } from "@/lib/domain/ports/vector-store-port";
+import type {
+  DocumentSummary,
+  SearchHit,
+  SourceFilter,
+  VectorStorePort,
+} from "@/lib/domain/ports/vector-store-port";
 import { readJsonIfPresent, writeJsonAtomic } from "@/lib/adapters/cache/atomic-json";
 import {
   embeddingsCacheDir,
@@ -90,6 +95,21 @@ export class InMemoryVectorStore implements VectorStorePort {
     await this.writeCache(fileHash, stored);
   }
 
+  list(): DocumentSummary[] {
+    const out: DocumentSummary[] = [];
+    for (const [fileHash, chunks] of this.byFileHash) {
+      const first = chunks[0];
+      if (!first) continue;
+      const kind = first.sourceRef.type === "csv-row" ? "csv" : "pdf";
+      const displayName = stripHashPrefix(
+        path.basename(first.sourceRef.file),
+        fileHash,
+      );
+      out.push({ fileHash, kind, displayName, chunks: chunks.length });
+    }
+    return out;
+  }
+
   search(queryVector: number[], k: number, filter?: SourceFilter): SearchHit[] {
     if (k <= 0 || queryVector.length === 0) return [];
     const queryNorm = vectorNorm(queryVector);
@@ -166,6 +186,11 @@ export class InMemoryVectorStore implements VectorStorePort {
     };
     await writeJsonAtomic(target, payload);
   }
+}
+
+function stripHashPrefix(basename: string, fileHash: string): string {
+  const prefix = `${fileHash}-`;
+  return basename.startsWith(prefix) ? basename.slice(prefix.length) : basename;
 }
 
 function toChunk(p: PersistedChunk): Chunk {

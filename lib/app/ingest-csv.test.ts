@@ -46,6 +46,9 @@ function makeStore(initialHas = false): StoreState {
     search() {
       return [];
     },
+    list() {
+      return [];
+    },
   };
   return {
     store,

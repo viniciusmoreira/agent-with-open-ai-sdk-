@@ -77,6 +77,9 @@ function makeStore(chunks: Chunk[]): {
     },
     async upsert() {},
     search,
+    list() {
+      return [];
+    },
   };
   return { store, search };
 }

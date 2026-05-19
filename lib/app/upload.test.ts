@@ -43,6 +43,9 @@ function makeStore(initialHas = false): {
       search() {
         return [];
       },
+      list() {
+        return [];
+      },
     },
   };
 }

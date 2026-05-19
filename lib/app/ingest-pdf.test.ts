@@ -34,6 +34,9 @@ function makeStore(initialHas = false) {
     search() {
       return [];
     },
+    list() {
+      return [];
+    },
   };
   return {
     store,
@@ -544,6 +547,7 @@ describe("ingestPdf", () => {
         throw new Error("disk full");
       },
       search: () => [],
+      list: () => [],
     };
 
     await ingestPdf(

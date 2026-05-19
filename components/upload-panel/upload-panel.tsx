@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { IngestEvent } from "@/lib/domain/types";
+import type { DocumentSummary } from "@/lib/domain/ports/vector-store-port";
 
 import { FileRow } from "./file-row";
 import type { UploadFileEntry, UploadFileKind } from "./types";
@@ -25,15 +27,18 @@ const ACCEPT_ATTR = ACCEPTED_EXTENSIONS.join(",");
 export type UploadPanelProps = {
   uploadUrl?: string;
   ingestUrl?: string;
+  documentsUrl?: string;
 };
 
 export function UploadPanel({
   uploadUrl = "/api/upload",
   ingestUrl = "/api/ingest",
+  documentsUrl = "/api/documents",
 }: UploadPanelProps = {}) {
   const [files, setFiles] = useState<UploadFileEntry[]>([]);
   const [rejection, setRejection] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const { markReady } = useUploadReady();
@@ -66,18 +71,20 @@ export function UploadPanel({
           });
           return;
         }
-        if (body.cached) {
-          updateFile(entry.id, {
-            status: "cached",
-            fileHash: body.fileHash,
-          });
-          markReady();
-          return;
-        }
-        updateFile(entry.id, {
-          status: "ingesting",
-          fileHash: body.fileHash,
+        const fileHash = body.fileHash;
+        const nextStatus = body.cached ? "cached" : "ingesting";
+        setFiles((current) => {
+          const duplicateExists = current.some(
+            (e) => e.id !== entry.id && e.fileHash === fileHash,
+          );
+          if (duplicateExists) {
+            return current.filter((e) => e.id !== entry.id);
+          }
+          return current.map((e) =>
+            e.id === entry.id ? { ...e, status: nextStatus, fileHash } : e,
+          );
         });
+        if (body.cached) markReady();
       } catch (cause) {
         updateFile(entry.id, {
           status: "error",
@@ -179,6 +186,50 @@ export function UploadPanel({
 
   useIngestStream(onIngestEvent, { url: ingestUrl });
 
+  useEffect(() => {
+    let cancelled = false;
+    setIsBootstrapping(true);
+    void (async () => {
+      try {
+        const res = await fetch(documentsUrl);
+        if (!res.ok) return;
+        const body = (await res.json().catch(() => null)) as
+          | { documents?: DocumentSummary[] }
+          | null;
+        const documents = body?.documents;
+        if (cancelled || !Array.isArray(documents) || documents.length === 0) {
+          return;
+        }
+        setFiles((current) => {
+          const existing = new Set(
+            current
+              .map((entry) => entry.fileHash)
+              .filter((h): h is string => typeof h === "string"),
+          );
+          const additions: UploadFileEntry[] = documents
+            .filter((d) => !existing.has(d.fileHash))
+            .map((d) => ({
+              id: `existing-${d.fileHash}`,
+              name: d.displayName,
+              kind: d.kind,
+              status: "cached",
+              fileHash: d.fileHash,
+              chunks: d.chunks,
+            }));
+          if (additions.length === 0) return current;
+          return [...additions, ...current];
+        });
+        markReady();
+      } catch {
+      } finally {
+        if (!cancelled) setIsBootstrapping(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [documentsUrl, markReady]);
+
   return (
     <Card data-testid="upload-panel" className="w-full">
       <CardHeader>
@@ -225,6 +276,21 @@ export function UploadPanel({
             className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-200"
           >
             {rejection}
+          </div>
+        )}
+
+        {isBootstrapping && files.length === 0 && (
+          <div
+            data-testid="upload-bootstrap-loading"
+            role="status"
+            aria-live="polite"
+            className="flex items-center gap-2 rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground"
+          >
+            <span
+              aria-hidden="true"
+              className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+            />
+            <span>Loading previously ingested documents…</span>
           </div>
         )}
 

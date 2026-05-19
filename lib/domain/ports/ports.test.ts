@@ -32,6 +32,13 @@ describe("port contracts", () => {
           .filter((c) => (filter ? filter(c.sourceRef) : true))
           .slice(0, k)
           .map((chunk): SearchHit => ({ chunk, score: 1 })),
+      list: () =>
+        Array.from(store.entries()).map(([fileHash, chunks]) => ({
+          fileHash,
+          kind: "csv" as const,
+          displayName: "stub",
+          chunks: chunks.length,
+        })),
     };
     await adapter.hydrate();
     expect(adapter.has("missing")).toBe(false);

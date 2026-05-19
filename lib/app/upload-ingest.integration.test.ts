@@ -31,6 +31,9 @@ function makeStore(): VectorStorePort {
     search() {
       return [];
     },
+    list() {
+      return [];
+    },
   };
 }
 

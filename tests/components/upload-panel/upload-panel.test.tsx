@@ -64,13 +64,46 @@ const originalEventSource = (globalThis as { EventSource?: unknown })
   .EventSource;
 
 let fetchMock: Mock;
+let uploadResponse: Response | null;
+let documentsResponse: Response;
 
 beforeEach(() => {
   MockEventSource.instances = [];
   (globalThis as { EventSource?: unknown }).EventSource = MockEventSource;
-  fetchMock = vi.fn();
+  documentsResponse = jsonResponse({ documents: [] });
+  uploadResponse = null;
+  fetchMock = vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/documents")) {
+      return Promise.resolve(documentsResponse.clone());
+    }
+    if (!uploadResponse) {
+      throw new Error(`Unexpected fetch to ${url}`);
+    }
+    return Promise.resolve(uploadResponse.clone());
+  });
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
+
+function setUploadResponse(res: Response) {
+  uploadResponse = res;
+}
+
+function setDocumentsResponse(res: Response) {
+  documentsResponse = res;
+}
+
+function uploadFetchCalls(): Array<[string, RequestInit | undefined]> {
+  return fetchMock.mock.calls
+    .filter(([input]) => {
+      const url = typeof input === "string" ? input : (input as URL).toString();
+      return !url.includes("/api/documents");
+    })
+    .map(([input, init]) => {
+      const url = typeof input === "string" ? input : (input as URL).toString();
+      return [url, init as RequestInit | undefined];
+    });
+}
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -106,7 +139,7 @@ function currentSource(): MockEventSource {
 
 describe("UploadPanel", () => {
   it("rejects files whose extension is neither .csv nor .pdf", async () => {
-    fetchMock.mockResolvedValue(jsonResponse({ fileHash: "h", cached: false }));
+    setUploadResponse(jsonResponse({ fileHash: "h", cached: false }));
     renderPanel();
     const png = new File([new Uint8Array([1, 2, 3])], "logo.png", {
       type: "image/png",
@@ -115,31 +148,27 @@ describe("UploadPanel", () => {
     expect(screen.getByTestId("upload-rejection")).toHaveTextContent(
       /Only CSV and PDF/,
     );
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(uploadFetchCalls()).toHaveLength(0);
   });
 
   it("posts a dropped CSV to /api/upload as multipart form data", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ fileHash: "abc123", cached: false }),
-    );
+    setUploadResponse(jsonResponse({ fileHash: "abc123", cached: false }));
     renderPanel();
     const csv = new File(["a,b\n1,2"], "bids.csv", { type: "text/csv" });
     dropFiles([csv]);
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(uploadFetchCalls()).toHaveLength(1);
     });
-    const [url, init] = fetchMock.mock.calls[0]!;
+    const [url, init] = uploadFetchCalls()[0]!;
     expect(url).toBe("/api/upload");
-    expect((init as RequestInit).method).toBe("POST");
-    const body = (init as RequestInit).body;
+    expect(init?.method).toBe("POST");
+    const body = init?.body;
     expect(body).toBeInstanceOf(FormData);
     expect((body as FormData).get("file")).toBe(csv);
   });
 
   it("renders the cached badge without progress when the server returns cached: true", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ fileHash: "deadbeef", cached: true }),
-    );
+    setUploadResponse(jsonResponse({ fileHash: "deadbeef", cached: true }));
     renderPanel();
     const csv = new File(["a,b\n1,2"], "bids.csv", { type: "text/csv" });
     dropFiles([csv]);
@@ -151,9 +180,7 @@ describe("UploadPanel", () => {
   });
 
   it("renders csv-progress events as a row count", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ fileHash: "csv1", cached: false }),
-    );
+    setUploadResponse(jsonResponse({ fileHash: "csv1", cached: false }));
     renderPanel();
     const csv = new File(["a,b\n1,2"], "bids.csv", { type: "text/csv" });
     dropFiles([csv]);
@@ -175,9 +202,7 @@ describe("UploadPanel", () => {
   });
 
   it("renders page-progress events as X/Y pages with the path", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ fileHash: "pdf1", cached: false }),
-    );
+    setUploadResponse(jsonResponse({ fileHash: "pdf1", cached: false }));
     renderPanel();
     const pdf = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], "plans.pdf", {
       type: "application/pdf",
@@ -203,9 +228,7 @@ describe("UploadPanel", () => {
   });
 
   it("renders a plain-language error and no stack trace on file-error", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ fileHash: "csv2", cached: false }),
-    );
+    setUploadResponse(jsonResponse({ fileHash: "csv2", cached: false }));
     renderPanel();
     const csv = new File(["a,b\n1,2"], "bids.csv", { type: "text/csv" });
     dropFiles([csv]);
@@ -228,9 +251,7 @@ describe("UploadPanel", () => {
   });
 
   it("flips ready to true on the first file-done event and surfaces unmapped headers", async () => {
-    fetchMock.mockResolvedValue(
-      jsonResponse({ fileHash: "csv3", cached: false }),
-    );
+    setUploadResponse(jsonResponse({ fileHash: "csv3", cached: false }));
     renderPanel();
     const csv = new File(["a,b\n1,2"], "bids.csv", { type: "text/csv" });
     dropFiles([csv]);
@@ -256,8 +277,93 @@ describe("UploadPanel", () => {
     );
   });
 
+  it("shows a loading indicator while /api/documents is pending and hides it after the response", async () => {
+    let resolveDocs: (res: Response) => void;
+    const docsPromise = new Promise<Response>((resolve) => {
+      resolveDocs = resolve;
+    });
+    setDocumentsResponse(jsonResponse({ documents: [] }));
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/documents")) return docsPromise;
+      throw new Error(`Unexpected fetch to ${url}`);
+    });
+    renderPanel();
+    expect(screen.getByTestId("upload-bootstrap-loading")).toBeInTheDocument();
+    await act(async () => {
+      resolveDocs!(jsonResponse({ documents: [] }));
+      await docsPromise;
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("upload-bootstrap-loading")).toBeNull();
+    });
+  });
+
+  it("hydrates the file list from /api/documents on mount and marks ready", async () => {
+    setDocumentsResponse(
+      jsonResponse({
+        documents: [
+          {
+            fileHash: "h1",
+            kind: "csv",
+            displayName: "bid-tab.csv",
+            chunks: 124,
+          },
+          {
+            fileHash: "h2",
+            kind: "pdf",
+            displayName: "plans.pdf",
+            chunks: 6,
+          },
+        ],
+      }),
+    );
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("bid-tab.csv")).toBeInTheDocument();
+    });
+    expect(screen.getByText("plans.pdf")).toBeInTheDocument();
+    expect(screen.getAllByTestId("upload-file-cached-badge")).toHaveLength(2);
+    expect(screen.getByTestId("ready-probe")).toHaveTextContent("yes");
+  });
+
+  it("stays in the empty state when /api/documents returns an empty list", async () => {
+    renderPanel();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("upload-file-list")).toBeNull();
+    expect(screen.getByTestId("ready-probe")).toHaveTextContent("no");
+  });
+
+  it("does not duplicate a document already present in the list", async () => {
+    setDocumentsResponse(
+      jsonResponse({
+        documents: [
+          {
+            fileHash: "abc123",
+            kind: "csv",
+            displayName: "bids.csv",
+            chunks: 10,
+          },
+        ],
+      }),
+    );
+    setUploadResponse(jsonResponse({ fileHash: "abc123", cached: true }));
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByText("bids.csv")).toBeInTheDocument();
+    });
+    const csv = new File(["a,b\n1,2"], "bids.csv", { type: "text/csv" });
+    dropFiles([csv]);
+    await waitFor(() => {
+      expect(screen.getAllByTestId("upload-file-cached-badge").length).toBeGreaterThan(0);
+    });
+    expect(screen.getAllByText("bids.csv")).toHaveLength(1);
+  });
+
   it("surfaces a server-side error message when /api/upload returns non-ok", async () => {
-    fetchMock.mockResolvedValue(
+    setUploadResponse(
       jsonResponse({ error: "Upload exceeds limit" }, { status: 413 }),
     );
     renderPanel();

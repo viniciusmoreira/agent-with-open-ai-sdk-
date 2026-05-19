@@ -15,6 +15,9 @@ const store: VectorStorePort = {
   search() {
     return [];
   },
+  list() {
+    return [];
+  },
 };
 
 describe("tools registry", () => {
