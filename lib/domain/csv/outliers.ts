@@ -20,9 +20,10 @@ export function flagOutliers(
   const threshold = opts.threshold ?? DEFAULT_THRESHOLD;
   const minPeers = opts.minPeers ?? DEFAULT_MIN_PEERS;
 
+  // Scope peer groups to projectId — region/letting/market move prices across projects.
   const groups = new Map<string, BidRow[]>();
   for (const row of rows) {
-    const key = JSON.stringify([row.itemNo, row.unit]);
+    const key = JSON.stringify([row.projectId, row.itemNo, row.unit]);
     const bucket = groups.get(key);
     if (bucket) bucket.push(row);
     else groups.set(key, [row]);

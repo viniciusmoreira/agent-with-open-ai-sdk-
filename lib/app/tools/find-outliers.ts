@@ -14,7 +14,8 @@ export const findOutliersInputSchema = z
 export type FindOutliersInput = z.infer<typeof findOutliersInputSchema>;
 
 const DESCRIPTION = [
-  "Flags bid rows whose unit price deviates from peer bids on the same itemNo + unit by more than a threshold (default 15%).",
+  "Flags bid rows whose unit price deviates from peer bids on the same projectId + itemNo + unit by more than a threshold (default 15%).",
+  "Peer groups are scoped to a single project so prices from other projects (different region or letting) cannot inflate the deviation.",
   "Operates only on the parsed CSV — never on PDF documents.",
   "Returns each flagged row with: groupMean (leave-one-out peer mean), groupCount, and a signed deviation fraction (positive = above peers, negative = below).",
   "Results are sorted by |deviation| descending (strongest signal first) and capped at the top 50 flags; the response includes `total` (pre-cap count) so you can note truncation when total > flagged.length.",

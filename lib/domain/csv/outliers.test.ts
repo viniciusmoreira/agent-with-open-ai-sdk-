@@ -92,6 +92,21 @@ describe("flagOutliers", () => {
     expect(result.flagged[0]?.deviation).toBeCloseTo(-0.4, 10);
   });
 
+  it("scopes peer groups to projectId so a bid in project A is not compared against project B", () => {
+    const rows: BidRow[] = [
+      makeRow(1, { projectId: "A", itemNo: "900", unit: "LS", unitPrice: 100 }),
+      makeRow(2, { projectId: "A", itemNo: "900", unit: "LS", unitPrice: 100 }),
+      makeRow(3, { projectId: "A", itemNo: "900", unit: "LS", unitPrice: 130 }),
+      makeRow(4, { projectId: "B", itemNo: "900", unit: "LS", unitPrice: 1000 }),
+      makeRow(5, { projectId: "B", itemNo: "900", unit: "LS", unitPrice: 1000 }),
+    ];
+    const result = flagOutliers(rows);
+    expect(result.flagged).toHaveLength(1);
+    expect(result.flagged[0]?.rowId).toBe(3);
+    expect(result.flagged[0]?.groupCount).toBe(3);
+    expect(result.flagged[0]?.groupMean).toBe(100);
+  });
+
   it("groups by composite key (itemNo, unit) so different units never compare", () => {
     const rows: BidRow[] = [
       makeRow(1, { itemNo: "500", unit: "LS", unitPrice: 100 }),
